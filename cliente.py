@@ -12,7 +12,8 @@ def main():
     cliente_socket.connect((HOST, PORT))
     print(f"conectado ao servidor em {HOST}:{PORT}")
 
-    # handshake 
+    # == handshake ==
+    # exemplo de mensagem de handshake
     modo_operacao = "GBN"
     tamanho_max = 100
 

@@ -4,7 +4,7 @@ HOST = "127.0.0.1" # localhost
 PORT = 5000 # porta do servidor (pode ser qualquer porta acima de 1024)
 
 def main():
-    
+
     # cria o scket TCP (AF_INET = IPV4, SOCK_STREAM = TCP)
     servidor_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
@@ -34,5 +34,5 @@ def main():
     servidor_socket.close()
     print("servidor encerrado")
 
-    if __name__ == "__main__":
-        main()
+if __name__ == "__main__":
+    main()
