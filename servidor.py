@@ -16,21 +16,21 @@ def main():
     servidor_socket.listen(1)
     
     # aceita uma conexao (bloqueia ate algum cliente se conectar)
-    conn, addr = servidor_socket.accept()
-    print(f"cliente conectado: {addr}")
+    conexao, endereco = servidor_socket.accept()
+    print(f"cliente conectado: {endereco}")
 
     #handshake: recebe a mensagem do cliente
-    data = conn.recv(1024) # buffer de 1024 bytes, lê até 1024 bytes da conexão
+    data = conexao.recv(1024) # buffer de 1024 bytes, lê até 1024 bytes da conexão
     mensagem = data.decode("utf-8") # decodifica os bytes para string
     print(f"[SERVIDOR] Recebi do cliente: {mensagem}")
 
     # responde algo para o cliente (confirmação do handshake)
     resposta = "Mensagem recebida com sucesso!"
-    conn.send(resposta.encode("utf-8"))
+    conexao.send(resposta.encode("utf-8"))
     print(f"[SERVIDOR] Enviei para o cliente: {resposta}")
 
     # fecha a conexão com o cliente
-    conn.close()
+    conexao.close()
     servidor_socket.close()
     print("servidor encerrado")
 

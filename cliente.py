@@ -14,7 +14,7 @@ def main():
 
     # == handshake ==
     # exemplo de mensagem de handshake
-    modo_operacao = "GBN"
+    modo_operacao = "GBN" # Go-Back-N
     tamanho_max = 100
 
     handshake_msg = f"HANDSHAKE;modo={modo_operacao};maxlen={tamanho_max}"
