@@ -10,38 +10,49 @@ def fragmentar_texto(texto, tam_bloco=4):  # divide o texto em blocos de tamanho
 def enviar_linha(sock, mensagem):
     sock.sendall((mensagem + "\n").encode("utf-8"))
 
-def enviar_lote(comeco_do_envio,janela,pacotes,cliente_socket):
-    for i in range(comeco_do_envio,janela):
+def enviar_lote(cliente_socket, pacotes, comeco_do_envio, ultimo_bite, janela):
+    if comeco_do_envio + janela <= ultimo_bite:
+        fim_do_envio = comeco_do_envio + janela
+    
+    else:
+        fim_do_envio = ultimo_bite
+
+    for i in range(comeco_do_envio, fim_do_envio):
         # exemplo: DATA;seq=0;total=10;payload=ABCD
 
         enviar_linha(cliente_socket, pacotes[i])
         print(f"[CLIENTE] Enviei para o servidor: {pacotes[i]}")
-    resposta = esperarAckOuNack(cliente_socket,pacotes,pacotes,comeco_do_envio+janela)
-    return reposta
+    resposta = esperarAckOuNack(cliente_socket,pacotes,comeco_do_envio, fim_do_envio)
+    return resposta
 
 
-def esperarAckOuNack(cliente_socket,pacotes,ateOndeFoiMandado,ondeComecouMandar):
+def esperarAckOuNack(cliente_socket,pacotes,comeco_do_envio,fim_do_envio):
     cliente_socket.settimeout(5)
     try:
-        resposta = cliente_socket.recv(1024)
+        dados = cliente_socket.recv(1024)
+        resposta = dados.decode("utf-8").strip()
     except:
-        retransmissao(ondeComecouMandar,pacotes,ateOndeFoiMandado,cliente_socket)
+        return retransmissao(cliente_socket,pacotes,comeco_do_envio,fim_do_envio)
 
     partes = resposta.split()
+    tipo = partes[0]
+    numero = partes[1]
 
-    if partes[0] == "NACK":
-        retransmissao(int(partes[1]),pacotes,ateOndeFoiMandado,cliente_socket)
+    if tipo == "NACK":
+        return retransmissao(cliente_socket, pacotes, int(numero), fim_do_envio)
     
-    if partes[1] == "ACK":
-        return f"Confirmado {ateOndeFoiMandado} "
+    if tipo == "ACK":
+        return (f"ACK {numero}")
+    
+    return retransmissao(cliente_socket, pacotes, comeco_do_envio, fim_do_envio)
 
-def retransmissao(numeroNack,pacotes,ateQualPacoteEnviar,cliente_socket):
-    for i in range(numeroNack,ateQualPacoteEnviar):
+def retransmissao(cliente_socket, pacotes, comeco_do_envio, fim_do_envio):
+    print(f"[CLIENTE] Reenviando do pacote {comeco_do_envio} até {fim_do_envio - 1}")
+    for i in range(comeco_do_envio ,fim_do_envio):
         enviar_linha(cliente_socket, pacotes[i])    
         print(f"[CLIENTE] Enviei para o servidor: {pacotes[i]}")
 
-    esperarAckOuNack(cliente_socket,pacotes,ateQualPacoteEnviar)
-
+    return esperarAckOuNack(cliente_socket, pacotes, comeco_do_envio, fim_do_envio)
 
 
 
@@ -82,28 +93,26 @@ def main():
     print(f"[CLIENTE] Texto será enviado em {total_pacotes} pacotes.\n")
 
     arrPacotes = []
-    seq=0
     for i, payload in enumerate(blocos):
         # exemplo: DATA;seq=0;total=10;payload=ABCD
-        arrayPacotes[i].append(f"DATA;seq={seq};payload={payload}") 
-        seq= seq+4
+        arrPacotes.append(f"DATA;seq={i};payload={payload}")
 
-    loteEnviado = False
     comeco_envio = 0
-    tamanhoJaEnviado = 0
     janela = 5
-    while not loteEnviado:
-        resposta = enviar_lote(comeco_do_envio,janela,pacotes,cliente_socket)
+    bites_totais = len(arrPacotes)
+    while comeco_envio < bites_totais:
+
+        resposta = enviar_lote(cliente_socket, arrPacotes, comeco_envio, bites_totais, janela)
         partes = resposta.split()
-        comeco_envio = int(partes[1])
-        tamanhoJaEnviado += janela
 
-
+        if partes[0] == "ACK":
+            comeco_envio = int(partes[1])
+            print(f"Lote enviado com sucesso")
+        
+        else:
+            print("Erro na aplicação")
     
     
-    
-    # print(f"[CLIENTE] Enviei para o servidor: {mensagem}")
-    # enviar_linha(cliente_socket, mensagem)
 
     # depois de todos os pacotes terem sido enviados, envia uma mensagem de fim
     enviar_linha(cliente_socket, "END")
