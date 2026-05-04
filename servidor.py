@@ -94,7 +94,7 @@ def processar_mensagem(conexao, mensagem, seqEsperado, pacotes_recebidos,janela)
         print("[SERVIDOR] Pacote em formato inesperado.")
         return True, seqEsperado
 
-    seq, payload = resultado
+    seq, payload,campos = resultado
     if not validar_pacote(campos):
         print("[SERVIDOR] Checksum inválido.")
         conexao.sendall(f"NACK {seqEsperado}\n".encode())
