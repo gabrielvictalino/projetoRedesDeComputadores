@@ -1,12 +1,28 @@
 import socket
+import random
+
+HOST = "127.0.0.1"
+PORT = 5000
 
 
-HOST = "127.0.0.1"  # localhost
-PORT = 5000  # porta do servidor (pode ser qualquer porta acima de 1024)
+def calcular_checksum(payload):
+    return sum(ord(c) for c in payload) % 256
 
 
-def processar_pacote_data(mensagem):
-    # exemplo de mensagem: "DATA;seq=0;total=10;payload=ABCD"
+def montar_pacote(seq, payload):
+    checksum = calcular_checksum(payload)
+    return f"DATA;seq={seq};payload={payload};checksum={checksum}"
+
+
+def validar_pacote(campos):
+    payload = campos.get("payload", "")
+    checksum_recebido = int(campos.get("checksum", -1))
+    checksum_calculado = calcular_checksum(payload)
+    return checksum_recebido == checksum_calculado
+
+
+
+def extrair_pacote_data(mensagem):
     partes = mensagem.split(";")
 
     if partes[0] != "DATA":
@@ -19,55 +35,104 @@ def processar_pacote_data(mensagem):
             campos[chave] = valor
 
     seq = int(campos.get("seq", -1))
-    total = int(campos.get("total", -1))
     payload = campos.get("payload", "")
-    checksum_recebido = int(campos.get("checksum", 0))
-    
-    soma_total = 0
-    
-    for caractere in payload:
-        soma_total += ord(caractere)
 
-    if soma_total != checksum_recebido:
-        return False, seq, total, payload
-
-    return True, seq, total, payload
+    return seq, payload, campos
 
 
-def main():
-    # cria o socket TCP (AF_INET = IPV4, SOCK_STREAM = TCP)
+
+
+
+def criar_servidor():
     servidor_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    # faz o bind: associa o socket a (HOST, PORT)
     servidor_socket.bind((HOST, PORT))
-    print(f"servidor iniciado em {HOST}:{PORT}")
-
-    # começa a escutar conexoes (1 = fila maxima de conexoes pendentes)
     servidor_socket.listen(1)
 
-    # aceita uma conexao (bloqueia ate algum cliente se conectar)
+    print(f"servidor iniciado em {HOST}:{PORT}")
+    return servidor_socket
+
+
+def aceitar_conexao(servidor_socket):
     conexao, endereco = servidor_socket.accept()
     print(f"cliente conectado: {endereco}")
+    return conexao
 
-    # variaveis para controle da comunicação
-    pacotes_recebidos = {}
-    total_esperado = None
-    handshake_recebido = False
+
+def tratar_handshake(conexao, mensagem):
+    partes = mensagem.split(";")
+
+    if partes[0] != "HANDSHAKE":
+        return None
+
+    campos = {}
+    for parte in partes[1:]:
+        if "=" in parte:
+            chave, valor = parte.split("=", 1)
+            campos[chave] = valor
+
+    modo_operacao = campos.get("modo", "")
+    
+
+    print(f"[SERVIDOR] Recebi do cliente: {mensagem}")
+    janela = 5
+    resposta = f"Mensagem recebida com sucesso! Janela : {janela}"
+    conexao.sendall((resposta + "\n").encode("utf-8"))
+
+    print(f"[SERVIDOR] Enviei para o cliente: {resposta}\n")
+    return modo_operacao,janela
+
+
+def processar_mensagem(conexao, mensagem, seqEsperado, pacotes_recebidos,janela):
+    if mensagem == "END":
+        print("[SERVIDOR] Recebi mensagem de fim (END).")
+        return False, seqEsperado
+
+    print(f"[SERVIDOR] Recebi pacote bruto: {mensagem}")
+
+    resultado = extrair_pacote_data(mensagem)
+    if resultado is None:
+        print("[SERVIDOR] Pacote em formato inesperado.")
+        return True, seqEsperado
+
+    seq, payload = resultado
+    if not validar_pacote(campos):
+        print("[SERVIDOR] Checksum inválido.")
+        conexao.sendall(f"NACK {seqEsperado}\n".encode())
+        return False, seqEsperado
+        print("[SERVIDOR] Checksum inválido.")
+        conexao.sendall(f"NACK {seqEsperado}\n".encode())
+        return False, seqEsperado
+    if seq != seqEsperado:
+        conexao.sendall(f"NACK {seqEsperado}".encode())
+        return False, seqEsperado
+
+    if seq == seqEsperado:
+        seqEsperado += 4
+
+    print(f"\n[SERVIDOR] Metadados - seq={seq}, payload='{payload}'")
+    pacotes_recebidos[seq] = payload
+
+    return True, seqEsperado
+
+
+def loop_recebimento(conexao, seq):
     buffer = ""
+    pacotes_recebidos = {}
+    handshake_recebido = False
+    seqEsperado = seq
+    modo_operacao = ""
+    janela = 0
+    continuar = False
 
     while True:
-        # lê até 1024 bytes da conexão
         data = conexao.recv(1024)
 
         if not data:
-            # conexao fechada pelo cliente
-            break
+            return None,False,0
 
-        # adiciona o que chegou ao buffer
         buffer += data.decode("utf-8")
 
-        # processa todas as mensagens completas encontradas no buffer
-        # cada mensagem termina com "\n"
+        
         while "\n" in buffer:
             linha, buffer = buffer.split("\n", 1)
             mensagem = linha
@@ -75,79 +140,47 @@ def main():
             if not mensagem:
                 continue
 
-            # handshake: a primeira mensagem recebida do cliente
+            
+
             if not handshake_recebido:
-                print(f"[SERVIDOR] Recebi do cliente: {mensagem}")
-
-                # responde algo para o cliente (confirmação do handshake)
-                resposta = "Mensagem recebida com sucesso!"
-                conexao.sendall((resposta + "\n").encode("utf-8"))
-                print(f"[SERVIDOR] Enviei para o cliente: {resposta}\n")
-
+                modo_operacao,janela = tratar_handshake(conexao, mensagem)
                 handshake_recebido = True
                 continue
+            if modo_operacao == "GBN":
+                
+                continuar, seqEsperado = processar_mensagem(
+                    conexao, mensagem, seqEsperado, pacotes_recebidos,janela
+                )
 
-            # verifica se recebeu a mensagem de fim
-            if mensagem == "END":
-                print("[SERVIDOR] Recebi mensagem de fim (END).")
-                break
+            if seqEsperado == seq + 4*janela:
+                conexao.sendall(f"ACK {seqEsperado}, Janela {random.randint(1,5)}".encode())
+                return pacotes_recebidos,True,seqEsperado
+            
 
-            print(f"[SERVIDOR] Recebi pacote bruto: {mensagem}")
+            if not continuar:
+                conexao.sendall(f"ACK END".encode())
+                return pacotes_recebidos, False,seqEsperado
+    
+    
 
-            resultado = processar_pacote_data(mensagem)
-            if resultado is None:
-                print("[SERVIDOR] Pacote em formato inesperado.")
-                continue
 
-            checksun_correto, seq, total, payload = resultado
+def main():
+    servidor_socket = criar_servidor()
+    conexao = aceitar_conexao(servidor_socket)
+    seq = 0
+    while(True):
 
-            if not checksun_correto:
-                print("Número de digitos incorretos") # Solução temp
-                break
-
-            # guarda total de pacotes se ainda não souber
-            if total_esperado is None:
-                total_esperado = total
-                print(f"[SERVIDOR] Total de pacotes esperado: {total_esperado}")
-
-            # metadados do pacote
-            print(f"\n[SERVIDOR] Metadados - seq={seq}, total={total}, payload='{payload}'")
-
-            # armazena payload por número de sequência
-            pacotes_recebidos[seq] = payload
-
-        # se a mensagem END foi recebida, encerra o while principal também
-        if mensagem == "END":
+        pacotes,continuar,seq = loop_recebimento(conexao,seq)
+        if continuar == False:
             break
 
-    # remontar a mensagem completa
-    if total_esperado is not None:
-        mensagem_completa = ""
-        faltando = []
-
-        for i in range(total_esperado):
-            # se algum seq faltar, coloca um marcador
-            if i in pacotes_recebidos:
-                parte = pacotes_recebidos[i]
-            else:
-                parte = "[FALTA PACOTE]"
-                faltando.append(i)
-
-            mensagem_completa += parte
-
-        print(f"\n[SERVIDOR] Mensagem completa reconstruída: {mensagem_completa}")
-
-        if faltando:
-            print(f"[SERVIDOR] Pacotes faltando: {faltando}")
-        else:
-            print("[SERVIDOR] Nenhum pacote faltando.")
-    else:
-        print("[SERVIDOR] Nenhum pacote DATA recebido.")
-
-    # fecha a conexão com o cliente
     conexao.close()
     servidor_socket.close()
+
     print("servidor encerrado")
+    #exibir mensagem
+    print("pacotes recebidos:", pacotes)
+
 
 if __name__ == "__main__":
     main()

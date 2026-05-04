@@ -4,66 +4,67 @@ from threading import Timer
 HOST = "127.0.0.1"  # endereço do servidor (localhost)
 PORT = 5000  # porta do servidor
 
+def calcular_checksum(payload):
+    return sum(ord(c) for c in payload) % 256
+
+
+def montar_pacote(seq, payload):
+    checksum = calcular_checksum(payload)
+    return f"DATA;seq={seq};payload={payload};checksum={checksum}"
+
+
+def validar_pacote(campos):
+    payload = campos.get("payload", "")
+    checksum_recebido = int(campos.get("checksum", -1))
+    checksum_calculado = calcular_checksum(payload)
+    return checksum_recebido == checksum_calculado
+
+
 def fragmentar_texto(texto, tam_bloco=4):  # divide o texto em blocos de tamanho 4 para facilitar o envio
     return [texto[i:i+tam_bloco] for i in range(0, len(texto), tam_bloco)]
 
-def enviar_linha(sock, mensagem):
+def enviar_linha(sock, mensagem
+                 ):
     sock.sendall((mensagem + "\n").encode("utf-8"))
 
-def enviar_lote(cliente_socket, pacotes, comeco_do_envio, ultimo_bite, janela):
-    if comeco_do_envio + janela <= ultimo_bite:
-        fim_do_envio = comeco_do_envio + janela
-    
-    else:
-        fim_do_envio = ultimo_bite
-
-    for i in range(comeco_do_envio, fim_do_envio):
-        # exemplo: DATA;seq=0;total=10;payload=ABCD
+def enviar_lote(comeco_do_envio,janela,pacotes,cliente_socket):
+    for i in range(comeco_do_envio, min(comeco_do_envio + janela, len(pacotes))):
+        # exemplo: "DATA;seq={seq};payload={payload}"
 
         enviar_linha(cliente_socket, pacotes[i])
         print(f"[CLIENTE] Enviei para o servidor: {pacotes[i]}")
-    resposta = esperarAckOuNack(cliente_socket,pacotes,comeco_do_envio, fim_do_envio)
+    resposta = esperarAckOuNack_gbn(cliente_socket,pacotes,comeco_do_envio+janela,comeco_do_envio)
     return resposta
 
-def calcular_checksum(payload):
-    soma_total = 0
-    
-    for caractere in payload:
-        soma_total += ord(caractere)
 
-        # Ord transforma o caractere em um valor numerico de utf-8
-        
-    return soma_total
-
-def esperarAckOuNack(cliente_socket,pacotes,comeco_do_envio,fim_do_envio):
+def esperarAckOuNack_gbn(cliente_socket,pacotes,ateOndeFoiMandado,ondeComecouMandar):
     cliente_socket.settimeout(5)
     try:
-        dados = cliente_socket.recv(1024)
-        resposta = dados.decode("utf-8").strip()
-    except:
-        return retransmissao(cliente_socket,pacotes,comeco_do_envio,fim_do_envio)
+        resposta = cliente_socket.recv(1024).decode("utf-8").strip()
+        print(f"[CLIENTE] Recebi do cliente : {resposta}")
+    except socket.timeout:
+        return retransmissao_gbn(ondeComecouMandar,pacotes,ateOndeFoiMandado,ondeComecouMandar,cliente_socket)
 
-    partes = resposta.split()
-    tipo = partes[0]
-    numero = partes[1]
+    partes = resposta.split(",")
+    partes1 = partes[0].split()
+    partes2 = partes[1].split()
 
-    if tipo == "NACK":
-        return retransmissao(cliente_socket, pacotes, int(numero), fim_do_envio)
+    if partes1[0] == "NACK":
+        return retransmissao_gbn(int(partes1[1]),pacotes,ateOndeFoiMandado,ondeComecouMandar, cliente_socket)
     
-    if tipo == "ACK":
-        return (f"ACK {numero}")
-    
-    return retransmissao(cliente_socket, pacotes, comeco_do_envio, fim_do_envio)
+    if partes1[0] == "ACK":
+        return f"Confirmado {ateOndeFoiMandado} , Janela {partes2[1]}"
 
-def retransmissao(cliente_socket, pacotes, comeco_do_envio, fim_do_envio):
-    print(f"[CLIENTE] Reenviando do pacote {comeco_do_envio} até {fim_do_envio - 1}")
-    for i in range(comeco_do_envio ,fim_do_envio):
+def retransmissao_gbn(numeroNack,pacotes,ateQualPacoteEnviar,ondeComecouMandar,cliente_socket):
+    for i in range(numeroNack//4,ateQualPacoteEnviar):
         enviar_linha(cliente_socket, pacotes[i])    
         print(f"[CLIENTE] Enviei para o servidor: {pacotes[i]}")
 
-    return esperarAckOuNack(cliente_socket, pacotes, comeco_do_envio, fim_do_envio)
+    return esperarAckOuNack_gbn(cliente_socket,pacotes,ateQualPacoteEnviar,ondeComecouMandar)
 
 
+
+    
 
 def main():
 
@@ -75,17 +76,21 @@ def main():
     print(f"conectado ao servidor em {HOST}:{PORT}")
 
     # exemplo de mensagem de handshake
-    modo_operacao = "GBN"  # Go-Back-N
+    modo_operacao = input("Digite o modo de operação a ser trabalhado: (GBN)/(RS) ")  # Go-Back-N  ou repetição seletiva.
     tamanho_max = 100
 
     # formato: HANDSHAKE;modo=GBN;maxlen=100
-    handshake_msg = f"HANDSHAKE;modo={modo_operacao};maxlen={tamanho_max}"
+    handshake_msg = f"HANDSHAKE;modo={modo_operacao}"
     enviar_linha(cliente_socket, handshake_msg)
     print(f"[CLIENTE] Enviei para o servidor: {handshake_msg}")
 
     # aguarda resposta do servidor
     data = cliente_socket.recv(1024)
     resposta = data.decode("utf-8").strip()
+    resposta_separada = resposta.split("!")
+    respostaSeparadaJanela = resposta_separada[1].split(":")
+    respostaSeparadaJanela = respostaSeparadaJanela[1]
+
     print(f"[CLIENTE] Recebi do servidor: {resposta}\n")
 
     # leitura da mensagem do usuário
@@ -102,35 +107,48 @@ def main():
     print(f"[CLIENTE] Texto será enviado em {total_pacotes} pacotes.\n")
 
     arrPacotes = []
+    seq=0
     for i, payload in enumerate(blocos):
-        cs = calcular_checksum(payload)
         # exemplo: DATA;seq=0;total=10;payload=ABCD
-        arrPacotes.append(f"DATA;seq={i};payload={payload};checksum={cs}")
+        arrPacotes.append(montar_pacote(seq,payload)) 
+        seq= seq+4
 
+    totalmenteConfirmado = False
     comeco_envio = 0
-    janela = 5
-    bites_totais = len(arrPacotes)
-    while comeco_envio < bites_totais:
+    tamanhoJaEnviado = 0
+    janela = int(respostaSeparadaJanela)
+    
+    # comeco_envio vai dizer a partir de qual pacote eu tenho que enviar.
+    #Terá incialmente valor = 0 e posteriormente terá o valor do ack recebido na resposta.
+    while not totalmenteConfirmado:
+        resposta = enviar_lote(comeco_envio,janela,arrPacotes,cliente_socket)
+        partes = resposta.split()   
+        if partes[0] == "Confirmado":
+            comeco_envio = int(partes[1])//4
+            tamanhoJaEnviado += comeco_envio
+        if tamanhoJaEnviado>=len(arrPacotes):
+            totalmenteConfirmado = True
 
-        resposta = enviar_lote(cliente_socket, arrPacotes, comeco_envio, bites_totais, janela)
-        partes = resposta.split()
-
-        if partes[0] == "ACK":
-            comeco_envio = int(partes[1])
-            print(f"Lote enviado com sucesso")
         
-        else:
-            print("Erro na aplicação")
+
     
     
+    
+    # print(f"[CLIENTE] Enviei para o servidor: {mensagem}")
+    # enviar_linha(cliente_socket, mensagem)
 
     # depois de todos os pacotes terem sido enviados, envia uma mensagem de fim
     enviar_linha(cliente_socket, "END")
     print(f"[CLIENTE] Enviei mensagem de fim: END")
+    data = cliente_socket.recv(1024)
+    resposta = data.decode("utf-8").strip()
+    print(f"[CLIENTE] Recebi a mensagem do servidor: {resposta}")
+    resposta = resposta.split()
 
     # fecha o socket
-    cliente_socket.close()
-    print("conexão encerrada")
+    if(resposta[1] == "END"):
+        cliente_socket.close()
+        print("conexão encerrada")
 
 if __name__ == "__main__":
     main()
