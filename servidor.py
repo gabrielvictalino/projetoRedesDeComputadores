@@ -21,8 +21,17 @@ def processar_pacote_data(mensagem):
     seq = int(campos.get("seq", -1))
     total = int(campos.get("total", -1))
     payload = campos.get("payload", "")
+    checksum_recebido = int(campos.get("checksum", 0))
+    
+    soma_total = 0
+    
+    for caractere in payload:
+        soma_total += ord(caractere)
 
-    return seq, total, payload
+    if soma_total != checksum_recebido:
+        return False, seq, total, payload
+
+    return True, seq, total, payload
 
 
 def main():
@@ -90,7 +99,11 @@ def main():
                 print("[SERVIDOR] Pacote em formato inesperado.")
                 continue
 
-            seq, total, payload = resultado
+            checksun_correto, seq, total, payload = resultado
+
+            if not checksun_correto:
+                print("Número de digitos incorretos") # Solução temp
+                break
 
             # guarda total de pacotes se ainda não souber
             if total_esperado is None:

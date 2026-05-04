@@ -25,6 +25,15 @@ def enviar_lote(cliente_socket, pacotes, comeco_do_envio, ultimo_bite, janela):
     resposta = esperarAckOuNack(cliente_socket,pacotes,comeco_do_envio, fim_do_envio)
     return resposta
 
+def calcular_checksum(payload):
+    soma_total = 0
+    
+    for caractere in payload:
+        soma_total += ord(caractere)
+
+        # Ord transforma o caractere em um valor numerico de utf-8
+        
+    return soma_total
 
 def esperarAckOuNack(cliente_socket,pacotes,comeco_do_envio,fim_do_envio):
     cliente_socket.settimeout(5)
@@ -94,8 +103,9 @@ def main():
 
     arrPacotes = []
     for i, payload in enumerate(blocos):
+        cs = calcular_checksum(payload)
         # exemplo: DATA;seq=0;total=10;payload=ABCD
-        arrPacotes.append(f"DATA;seq={i};payload={payload}")
+        arrPacotes.append(f"DATA;seq={i};payload={payload};checksum={cs}")
 
     comeco_envio = 0
     janela = 5
