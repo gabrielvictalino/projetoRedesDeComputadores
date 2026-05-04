@@ -7,18 +7,15 @@ PORT = 5000  # porta do servidor
 def calcular_checksum(payload):
     return sum(ord(c) for c in payload) % 256
 
-
 def montar_pacote(seq, payload):
     checksum = calcular_checksum(payload)
     return f"DATA;seq={seq};payload={payload};checksum={checksum}"
-
 
 def validar_pacote(campos):
     payload = campos.get("payload", "")
     checksum_recebido = int(campos.get("checksum", -1))
     checksum_calculado = calcular_checksum(payload)
     return checksum_recebido == checksum_calculado
-
 
 def fragmentar_texto(texto, tam_bloco=4):  # divide o texto em blocos de tamanho 4 para facilitar o envio
     return [texto[i:i+tam_bloco] for i in range(0, len(texto), tam_bloco)]
@@ -35,7 +32,6 @@ def enviar_lote(comeco_do_envio,janela,pacotes,cliente_socket):
         print(f"[CLIENTE] Enviei para o servidor: {pacotes[i]}")
     resposta = esperarAckOuNack_gbn(cliente_socket,pacotes,comeco_do_envio+janela,comeco_do_envio)
     return resposta
-
 
 def esperarAckOuNack_gbn(cliente_socket,pacotes,ateOndeFoiMandado,ondeComecouMandar):
     cliente_socket.settimeout(5)
@@ -62,7 +58,27 @@ def retransmissao_gbn(numeroNack,pacotes,ateQualPacoteEnviar,ondeComecouMandar,c
 
     return esperarAckOuNack_gbn(cliente_socket,pacotes,ateQualPacoteEnviar,ondeComecouMandar)
 
+def enviar_lote_rs(pacotes, cliente_socket, janela, confirmados, base):
+    for i in range(base, min(base + janela, len(pacotes))):
+        if not confirmados[i]:
+            enviar_linha(cliente_socket, pacotes[i])
+            print(f"[CLIENTE-RS] Enviando/Reenviando: {pacotes[i]}")
 
+def tratar_ack_rs(cliente_socket, confirmados):
+    cliente_socket.settimeout(2)
+    try:
+        resposta = cliente_socket.recv(1024).decode("utf-8").strip()
+        if "ACK" in resposta and "END" not in resposta:
+            partes = resposta.split()
+            seq_confirmado = int(partes[1])
+            indice = seq_confirmado // 4
+            if indice < len(confirmados):
+                confirmados[indice] = True
+                print(f"[CLIENTE-RS] Confirmado pacote seq={seq_confirmado}")
+            return True
+    except socket.timeout:
+        print("[CLIENTE-RS] Timeout aguardando ACK...")
+    return False
 
     
 
@@ -118,22 +134,35 @@ def main():
     tamanhoJaEnviado = 0
     janela = int(respostaSeparadaJanela)
     
-    # comeco_envio vai dizer a partir de qual pacote eu tenho que enviar.
-    #Terá incialmente valor = 0 e posteriormente terá o valor do ack recebido na resposta.
-    while not totalmenteConfirmado:
-        resposta = enviar_lote(comeco_envio,janela,arrPacotes,cliente_socket)
-        partes = resposta.split()   
-        if partes[0] == "Confirmado":
-            comeco_envio = int(partes[1])//4
-            tamanhoJaEnviado += comeco_envio
-        if tamanhoJaEnviado>=len(arrPacotes):
-            totalmenteConfirmado = True
+    if modo_operacao == "RS":
+        print(f"[CLIENTE] Iniciando Repetição Seletiva. Janela: {janela}")
+        confirmados = [False] * total_pacotes
+        base = 0  
+        
+        while base < total_pacotes:
+            enviar_lote_rs(arrPacotes, cliente_socket, janela, confirmados, base)
+            
+            tratar_ack_rs(cliente_socket, confirmados)
+            
+            while base < total_pacotes and confirmados[base]:
+                print(f"[CLIENTE] Pacote {base} ok!")
+                base += 1
+        print("[CLIENTE] Todos os pacotes confirmados via RS.")
 
+    else: 
+        totalmenteConfirmado = False
+        comeco_envio = 0
+        tamanhoJaEnviado = 0
+        while not totalmenteConfirmado:
+            resposta = enviar_lote(comeco_envio, janela, arrPacotes, cliente_socket)
+            partes = resposta.split()   
+            if partes[0] == "Confirmado":
+                comeco_envio = int(partes[1]) // 4
+                tamanhoJaEnviado = comeco_envio 
+            if comeco_envio >= len(arrPacotes):
+                totalmenteConfirmado = True
         
 
-    
-    
-    
     # print(f"[CLIENTE] Enviei para o servidor: {mensagem}")
     # enviar_linha(cliente_socket, mensagem)
 
