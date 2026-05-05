@@ -86,3 +86,9 @@ projetoRedesDeComputadores/
 
 ### Entrega 1
 O uso da IA foi restrito somente a pesquisas sobre a biblioteca "socket", sendo essa indispensável para o desenvolvimento da aplicação.
+
+### Entrega 2
+Utilizamos a IA para:
+1) debuggar
+2) entender conceitos relacionados ao conteúdo exposto em sala e como aplicá-los no projeto
+3) estruturação e organização de código
