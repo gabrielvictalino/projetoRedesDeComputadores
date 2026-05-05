@@ -1,43 +1,79 @@
-# Projeto de Infraestrutura de Comunicação
+# Projeto de Redes de Computadores
 
 ## Descrição
 
-Este projeto implementa uma infraestrutura básica de comunicação entre um cliente e um servidor utilizando sockets TCP/IP em Python. O objetivo é demonstrar os conceitos fundamentais de programação de redes aprendidos em sala de aula.
+Este projeto implementa uma aplicação cliente-servidor em Python que demonstra protocolos de controle de erro para transferência confiável de dados sobre TCP/IP. São implementados dois protocolos principais: Go-Back-N (GBN) e Repetição Seletiva (Repetição Seletiva - RS). O sistema inclui fragmentação de mensagens, cálculo de checksum para detecção de erros, controle de fluxo com janelas deslizantes e retransmissão automática de pacotes perdidos ou corrompidos.
 
 ## Arquitetura
 
-O projeto segue o modelo cliente-servidor com duas aplicações principais:
+O projeto segue o modelo cliente-servidor:
 
-- **Servidor** (servidor.py): Aguarda por conexões de clientes na porta 5000 (localhost), recebe mensagens de handshake e responde com uma confirmação.
-- **Cliente** (cliente.py): Conecta-se ao servidor, realiza um handshake negociando o modo de operação e tamanho máximo de mensagens, e fecha a conexão após receber a resposta.
+- **Servidor** (`servidor.py`): Aguarda conexões na porta 5000 (localhost), processa handshakes, recebe pacotes de dados e confirma recebimentos usando ACK/NACK.
+- **Cliente** (`cliente.py`): Conecta ao servidor, envia handshake com modo de operação, fragmenta mensagens em pacotes e gerencia retransmissões conforme o protocolo escolhido.
 
 ## Funcionalidades
 
 ### Handshake
 
-O cliente inicia a comunicação com um handshake contendo:
+O cliente inicia a comunicação enviando:
 
-- **Modo de operação**: Go-Back-N (GBN)
-- **Tamanho máximo de mensagem**: 100 bytes
+- **Modo de operação**: "GBN" (Go-Back-N) ou "RS" (Repetição Seletiva)
+- Formato: `HANDSHAKE;modo=<modo>`
 
-Formato da mensagem: `HANDSHAKE;modo=GBN;maxlen=100`
+O servidor responde confirmando o modo e definindo o tamanho da janela (ex.: "Mensagem recebida com sucesso! Janela : 5").
 
-### Comunicação
+### Formato de Pacotes
 
-- Estabelecimento de conexão TCP entre cliente e servidor
-- Troca de mensagens com confirmação
-- Encerramento adequado da conexão
+Pacotes de dados seguem o formato:
+
+```
+DATA;seq=<sequencia>;payload=<dados>;checksum=<valor>
+```
+
+- **seq**: Número de sequência (incrementa de 4 em 4)
+- **payload**: Dados (até 4 caracteres por pacote)
+- **checksum**: Soma dos códigos ASCII dos caracteres do payload módulo 256
+
+### Protocolos Implementados
+
+#### Go-Back-N (GBN)
+
+- Transmite janelas completas de pacotes
+- Retransmite toda a janela em caso de erro ou timeout
+- Confirmação cumulativa com ACKs
+
+#### Repetição Seletiva (RS)
+
+- Transmite pacotes individuais dentro da janela
+- Retransmite apenas pacotes não confirmados
+- Confirmação individual com ACKs por pacote
+
+### Controle de Erro
+
+- **Checksum**: Validação de integridade dos dados
+- **NACK**: Solicitação de retransmissão para pacotes inválidos ou fora de sequência
+- **Timeout**: Retransmissão automática após 5 segundos sem resposta
+
+### Encerramento
+
+- Cliente envia "END" após transmissão completa
+- Servidor confirma com "ACK END"
 
 ## Tecnologias Utilizadas
 
-- **Python**
-- **Socket API (biblioteca importada)**
-- **IPv4 (AF_INET)**
-- **TCP (SOCK_STREAM)**
+- **Python 3**
+- **Socket API** para comunicação TCP/IP
+- **Threading** (no cliente para timeouts)
 
 ## Como Executar
 
+### Pré-requisitos
+
+- Python 3 instalado
+
 ### 1. Iniciar o Servidor
+
+Abra um terminal e execute:
 
 ```
 python servidor.py
@@ -49,27 +85,41 @@ Output esperado:
 servidor iniciado em 127.0.0.1:5000
 ```
 
-### 2. Executar o Cliente (abrir outro terminal)
+### 2. Executar o Cliente
+
+Abra outro terminal e execute:
 
 ```
 python cliente.py
 ```
 
-Output esperado:
+O cliente solicitará:
 
-```
-conectado ao servidor em 127.0.0.1:5000
-[CLIENTE] Enviei para o servidor: HANDSHAKE;modo=GBN;maxlen=100
-[CLIENTE] Recebi do servidor: Mensagem recebida com sucesso!
-conexão encerrada
-```
+- Modo de operação: "GBN" ou "RS"
+- Mensagem a enviar (mínimo 30 caracteres)
+
+### Exemplo de Execução
+
+1. Inicie o servidor
+2. Execute o cliente
+3. Escolha o modo (ex.: GBN)
+4. Digite uma mensagem longa (mínimo 30 caracteres)
+5. Observe os logs de transmissão e confirmações
+
+## Considerações Técnicas
+
+- Porta padrão: 5000 (localhost)
+- Tamanho máximo do payload: 4 caracteres por pacote
+- Janela padrão: 5 pacotes
+- Timeout: 5 segundos para ACKs
+- Checksum: Soma ASCII módulo 256
 
 ## Estrutura do Projeto
 
 ```
 projetoRedesDeComputadores/
-├── cliente.py        # Cliente TCP/IP
-├── servidor.py       # Servidor TCP/IP
+├── cliente.py        # Implementação do cliente
+├── servidor.py       # Implementação do servidor
 └── README.md         # Este arquivo
 ```
 
@@ -85,10 +135,13 @@ projetoRedesDeComputadores/
 ## Relatório de uso de IA
 
 ### Entrega 1
+
 O uso da IA foi restrito somente a pesquisas sobre a biblioteca "socket", sendo essa indispensável para o desenvolvimento da aplicação.
 
 ### Entrega 2
+
 Utilizamos a IA para:
-1) debuggar
-2) entender conceitos relacionados ao conteúdo exposto em sala e como aplicá-los no projeto
-3) estruturação e organização de código
+
+1. debuggar
+2. entender conceitos relacionados ao conteúdo exposto em sala e como aplicá-los no projeto
+3. estruturação e organização de código
