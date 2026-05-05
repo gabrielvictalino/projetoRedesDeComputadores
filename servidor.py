@@ -94,22 +94,21 @@ def processar_mensagem(conexao, mensagem, seqEsperado, pacotes_recebidos,janela)
         print("[SERVIDOR] Pacote em formato inesperado.")
         return True, seqEsperado
 
-    seq, payload,campos = resultado
+    seq, payload, campos = resultado
+    
     if not validar_pacote(campos):
-        print("[SERVIDOR] Checksum inválido.")
+        print(f"[SERVIDOR] Checksum inválido para seq={seq}. Esperado seq={seqEsperado}")
         conexao.sendall(f"NACK {seqEsperado}\n".encode())
-        return False, seqEsperado
-        print("[SERVIDOR] Checksum inválido.")
-        conexao.sendall(f"NACK {seqEsperado}\n".encode())
-        return False, seqEsperado
+        return True, seqEsperado  # Continua recebendo, não sai
+    
     if seq != seqEsperado:
-        conexao.sendall(f"NACK {seqEsperado}".encode())
-        return False, seqEsperado
+        print(f"[SERVIDOR] Pacote fora de sequência. Recebido seq={seq}, esperado seq={seqEsperado}")
+        conexao.sendall(f"NACK {seqEsperado}\n".encode())
+        return True, seqEsperado  # Continua recebendo, não sai
 
-    if seq == seqEsperado:
-        seqEsperado += 4
-
-    print(f"\n[SERVIDOR] Metadados - seq={seq}, payload='{payload}'")
+    # Pacote correto - incrementa sequência
+    seqEsperado += 4
+    print(f"[SERVIDOR] Metadados - seq={seq}, payload='{payload}'")
     pacotes_recebidos[seq] = payload
 
     return True, seqEsperado
@@ -120,46 +119,95 @@ def loop_recebimento(conexao, seq):
     pacotes_recebidos = {}
     handshake_recebido = False
     seqEsperado = seq
+    seq_base = seq  # Primeira sequência da janela
     modo_operacao = ""
     janela = 0
-    continuar = False
+    ultima_janela_incompleta = False  # Flag para ter certeza se é a última janela
 
     while True:
-        data = conexao.recv(1024)
-
+        try:
+            data = conexao.recv(1024)
+        except Exception as e:
+            print(f"[SERVIDOR] Erro ao receber dados: {e}")
+            return pacotes_recebidos, False, seqEsperado
+        
         if not data:
-            return None,False,0
+            return pacotes_recebidos, False, seqEsperado
 
         buffer += data.decode("utf-8")
 
-        
         while "\n" in buffer:
             linha, buffer = buffer.split("\n", 1)
-            mensagem = linha
+            mensagem = linha.strip()
 
             if not mensagem:
                 continue
 
-            
-
+            # Primeiro, aguarda o handshake
             if not handshake_recebido:
-                modo_operacao,janela = tratar_handshake(conexao, mensagem)
-                handshake_recebido = True
+                resultado_hs = tratar_handshake(conexao, mensagem)
+                if resultado_hs is not None:
+                    modo_operacao, janela = resultado_hs
+                    handshake_recebido = True
                 continue
+
+            # Depois processa mensagens de dados
+            if mensagem == "END":
+                print(f"[SERVIDOR] Recebi mensagem END. Confirmando lote até seq={seqEsperado}")
+                # Envia ACK com última sequência confirmada (mesmo que janela incompleta)
+                if seqEsperado > seq_base:
+                    conexao.sendall(f"ACK {seqEsperado}, Janela {janela}\n".encode())
+                conexao.sendall(f"ACK END\n".encode())
+                return pacotes_recebidos, False, seqEsperado
+
+            # Processa pacote de dados
+            resultado = extrair_pacote_data(mensagem)
+            if resultado is None:
+                print("[SERVIDOR] Pacote em formato inesperado.")
+                continue
+
+            seq_recebido, payload, campos = resultado
+
+            # Valida checksum
+            if not validar_pacote(campos):
+                print(f"[SERVIDOR] Checksum inválido para seq={seq_recebido}")
+                conexao.sendall(f"NACK {seq_recebido}\n".encode())
+                continue
+
+            # Processa conforme protocolo
             if modo_operacao == "GBN":
-                
-                continuar, seqEsperado = processar_mensagem(
-                    conexao, mensagem, seqEsperado, pacotes_recebidos,janela
-                )
+                # Verifica se é o próximo esperado (sequência estrita)
+                if seq_recebido != seqEsperado:
+                    print(f"[SERVIDOR] Pacote fora de sequência. Recebido seq={seq_recebido}, esperado seq={seqEsperado}")
+                    conexao.sendall(f"NACK {seqEsperado}\n".encode())
+                    continue
 
-            if seqEsperado == seq + 4*janela:
-                conexao.sendall(f"ACK {seqEsperado}, Janela {random.randint(1,5)}".encode())
-                return pacotes_recebidos,True,seqEsperado
-            
+                # Pacote correto
+                seqEsperado += 4
+                print(f"[SERVIDOR] Recebido: seq={seq_recebido}, payload='{payload}'")
+                pacotes_recebidos[seq_recebido] = payload
 
-            if not continuar:
-                conexao.sendall(f"ACK END".encode())
-                return pacotes_recebidos, False,seqEsperado
+                # Envia ACK quando completa uma janela inteira
+                janela_size = 4 * janela
+                if (seqEsperado - seq_base) >= janela_size:
+                    print(f"[SERVIDOR] Janela completa! Enviando ACK para seq={seqEsperado}")
+                    conexao.sendall(f"ACK {seqEsperado}, Janela {janela}\n".encode())
+                    seq_base = seqEsperado
+
+            elif modo_operacao == "RS":
+                # Repetição Seletiva: aceita pacotes fora de ordem
+                # Se já recebido, ignora duplicata
+                if seq_recebido in pacotes_recebidos:
+                    print(f"[SERVIDOR-RS] Pacote duplicado seq={seq_recebido}, reenviando ACK")
+                    conexao.sendall(f"ACK {seq_recebido}\n".encode())
+                    continue
+
+                # Recebe o pacote (mesmo se fora de ordem)
+                print(f"[SERVIDOR-RS] Recebido: seq={seq_recebido}, payload='{payload}'")
+                pacotes_recebidos[seq_recebido] = payload
+
+                # Envia ACK imediatamente para este pacote
+                conexao.sendall(f"ACK {seq_recebido}\n".encode())
     
     
 
@@ -167,19 +215,15 @@ def loop_recebimento(conexao, seq):
 def main():
     servidor_socket = criar_servidor()
     conexao = aceitar_conexao(servidor_socket)
+    
     seq = 0
-    while(True):
-
-        pacotes,continuar,seq = loop_recebimento(conexao,seq)
-        if continuar == False:
-            break
-
+    pacotes_recebidos, fim, _ = loop_recebimento(conexao, seq)
+    
     conexao.close()
     servidor_socket.close()
 
     print("servidor encerrado")
-    #exibir mensagem
-    print("pacotes recebidos:", pacotes)
+    print("pacotes recebidos:", pacotes_recebidos)
 
 
 if __name__ == "__main__":

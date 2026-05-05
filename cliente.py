@@ -24,61 +24,80 @@ def enviar_linha(sock, mensagem
                  ):
     sock.sendall((mensagem + "\n").encode("utf-8"))
 
-def enviar_lote(comeco_do_envio,janela,pacotes,cliente_socket):
+def enviar_lote(comeco_do_envio, janela, pacotes, cliente_socket):
+    """Envia uma janela completa de pacotes e aguarda ACK da janela inteira"""
+    print(f"\n[CLIENTE] Enviando lote da janela: índices {comeco_do_envio} a {min(comeco_do_envio + janela - 1, len(pacotes) - 1)}")
+    
+    # Envia toda a janela
     for i in range(comeco_do_envio, min(comeco_do_envio + janela, len(pacotes))):
-        # exemplo: "DATA;seq={seq};payload={payload}"
-
         enviar_linha(cliente_socket, pacotes[i])
-        print(f"[CLIENTE] Enviei para o servidor: {pacotes[i]}")
-    resposta = esperarAckOuNack_gbn(cliente_socket,pacotes,comeco_do_envio+janela,comeco_do_envio)
-    return resposta
+        print(f"  [CLIENTE] Enviado: {pacotes[i]}")
+    
+    # Aguarda o ACK da janela inteira
+    return esperarAckOuNack_gbn(cliente_socket, pacotes, len(pacotes))
 
-def esperarAckOuNack_gbn(cliente_socket,pacotes,ateOndeFoiMandado,ondeComecouMandar):
+def esperarAckOuNack_gbn(cliente_socket, pacotes, total_pacotes):
+    """Aguarda ACK/NACK do servidor - ACK confirma TODA a janela"""
     cliente_socket.settimeout(5)
     try:
         resposta = cliente_socket.recv(1024).decode("utf-8").strip()
-        print(f"[CLIENTE] Recebi do cliente : {resposta}")
+        print(f"[CLIENTE] Recebi: {resposta}")
     except socket.timeout:
-        return retransmissao_gbn(ondeComecouMandar,pacotes,ateOndeFoiMandado,ondeComecouMandar,cliente_socket)
+        print(f"[CLIENTE] TIMEOUT ao aguardar ACK da janela")
+        return None
 
-    partes = resposta.split(",")
-    partes1 = partes[0].split()
-    partes2 = partes[1].split()
-
-    if partes1[0] == "NACK":
-        return retransmissao_gbn(int(partes1[1]),pacotes,ateOndeFoiMandado,ondeComecouMandar, cliente_socket)
+    # Analisa resposta
+    if resposta.startswith("NACK"):
+        partes = resposta.split()
+        if len(partes) >= 2:
+            nack_seq = int(partes[1])
+            print(f"[CLIENTE] NACK recebido - retransmitir a partir de seq={nack_seq}")
+            return f"NACK {nack_seq}"
     
-    if partes1[0] == "ACK":
-        return f"Confirmado {ateOndeFoiMandado} , Janela {partes2[1]}"
+    elif resposta.startswith("ACK"):
+        partes = resposta.split(",")
+        partes1 = partes[0].split()
+        if len(partes1) > 1:
+            seq_confirmado = int(partes1[1])
+            print(f"[CLIENTE] ACK recebido - janela confirmada até seq={seq_confirmado}")
+            return f"ACK {seq_confirmado}"
+    
+    return None
 
-def retransmissao_gbn(numeroNack,pacotes,ateQualPacoteEnviar,ondeComecouMandar,cliente_socket):
-    for i in range(numeroNack//4,ateQualPacoteEnviar):
-        enviar_linha(cliente_socket, pacotes[i])    
-        print(f"[CLIENTE] Enviei para o servidor: {pacotes[i]}")
-
-    return esperarAckOuNack_gbn(cliente_socket,pacotes,ateQualPacoteEnviar,ondeComecouMandar)
-
-def enviar_lote_rs(pacotes, cliente_socket, janela, confirmados, base):
-    for i in range(base, min(base + janela, len(pacotes))):
-        if not confirmados[i]:
+def enviar_lote_rs(pacotes, indices, cliente_socket):
+    """Envia pacotes individuais para RS"""
+    for i in indices:
+        if i < len(pacotes):
             enviar_linha(cliente_socket, pacotes[i])
-            print(f"[CLIENTE-RS] Enviando/Reenviando: {pacotes[i]}")
+            print(f"  [CLIENTE-RS] Enviado: {pacotes[i]}")
 
-def tratar_ack_rs(cliente_socket, confirmados):
+def receber_acks_rs(cliente_socket, confirmados, base, fim_janela, total_pacotes):
+    """Recebe múltiplos ACKs e marca pacotes como confirmados"""
     cliente_socket.settimeout(2)
+    acks_recebidos = 0
+    
     try:
-        resposta = cliente_socket.recv(1024).decode("utf-8").strip()
-        if "ACK" in resposta and "END" not in resposta:
-            partes = resposta.split()
-            seq_confirmado = int(partes[1])
-            indice = seq_confirmado // 4
-            if indice < len(confirmados):
-                confirmados[indice] = True
-                print(f"[CLIENTE-RS] Confirmado pacote seq={seq_confirmado}")
-            return True
-    except socket.timeout:
-        print("[CLIENTE-RS] Timeout aguardando ACK...")
-    return False
+        while True:
+            try:
+                resposta = cliente_socket.recv(1024).decode("utf-8").strip()
+                if not resposta:
+                    break
+                    
+                if resposta.startswith("ACK") and "END" not in resposta:
+                    partes = resposta.split()
+                    seq_confirmado = int(partes[1])
+                    indice = seq_confirmado // 4
+                    
+                    if 0 <= indice < total_pacotes:
+                        confirmados[indice] = True
+                        print(f"[CLIENTE-RS] ✓ Confirmado pacote {indice} (seq={seq_confirmado})")
+                        acks_recebidos += 1
+            except socket.timeout:
+                break
+    except Exception as e:
+        print(f"[CLIENTE-RS] Erro ao receber ACKs: {e}")
+    
+    return acks_recebidos
 
     
 
@@ -135,49 +154,102 @@ def main():
     janela = int(respostaSeparadaJanela)
     
     if modo_operacao == "RS":
-        print(f"[CLIENTE] Iniciando Repetição Seletiva. Janela: {janela}")
+        print(f"[CLIENTE] Iniciando Repetição Seletiva. Janela: {janela} pacotes\n")
         confirmados = [False] * total_pacotes
-        base = 0  
+        base = 0
+        tentativas_max = 5
         
         while base < total_pacotes:
-            enviar_lote_rs(arrPacotes, cliente_socket, janela, confirmados, base)
+            fim_janela = min(base + janela, total_pacotes)
+            indices_nao_confirmados = [i for i in range(base, fim_janela) if not confirmados[i]]
             
-            tratar_ack_rs(cliente_socket, confirmados)
+            print(f"[CLIENTE-RS] Enviando janela: índices {base} a {fim_janela - 1}")
+            enviar_lote_rs(arrPacotes, indices_nao_confirmados, cliente_socket)
             
+            # Aguarda múltiplos ACKs com timeout
+            acks = receber_acks_rs(cliente_socket, confirmados, base, fim_janela, total_pacotes)
+            print(f"[CLIENTE-RS] Recebido {acks} ACK(s) nesta iteração\n")
+            
+            # Avança base enquanto há confirmações na sequência
             while base < total_pacotes and confirmados[base]:
-                print(f"[CLIENTE] Pacote {base} ok!")
                 base += 1
-        print("[CLIENTE] Todos os pacotes confirmados via RS.")
+                
+        print("[CLIENTE] Todos os pacotes foram enviados!")
 
-    else: 
-        totalmenteConfirmado = False
+    else:  # GBN
+        print(f"[CLIENTE] Iniciando Go-Back-N. Janela: {janela} pacotes")
         comeco_envio = 0
-        tamanhoJaEnviado = 0
-        while not totalmenteConfirmado:
-            resposta = enviar_lote(comeco_envio, janela, arrPacotes, cliente_socket)
-            partes = resposta.split()   
-            if partes[0] == "Confirmado":
-                comeco_envio = int(partes[1]) // 4
-                tamanhoJaEnviado = comeco_envio 
-            if comeco_envio >= len(arrPacotes):
-                totalmenteConfirmado = True
+        tentativas = 0
+        max_tentativas = 3
         
-
-    # print(f"[CLIENTE] Enviei para o servidor: {mensagem}")
-    # enviar_linha(cliente_socket, mensagem)
+        while comeco_envio < len(arrPacotes):
+            tentativas += 1
+            if tentativas > max_tentativas:
+                print("[CLIENTE] Máximo de tentativas excedido!")
+                break
+            
+            # Verifica se é a última janela (pode ser incompleta)
+            eh_ultima_janela = (comeco_envio + janela) >= len(arrPacotes)
+            
+            # Envia uma janela
+            resposta = enviar_lote(comeco_envio, janela, arrPacotes, cliente_socket)
+            
+            # Se é última janela, pode ter timeout (esperando ACK que nunca vem para janela incompleta)
+            # Nesse caso, simplismo enviar END
+            if eh_ultima_janela and resposta is None:
+                print(f"[CLIENTE] Última janela (incompleta) enviada. Enviando END...")
+                enviar_linha(cliente_socket, "END")
+                comeco_envio = len(arrPacotes)  # Marca como completo
+                break
+            
+            if resposta is None:
+                # Timeout - retransmite a mesma janela
+                print(f"[CLIENTE] Timeout, retransmitindo a janela...")
+                tentativas += 1
+                continue
+            
+            if resposta.startswith("ACK"):
+                # Janela confirmada, avança
+                seq_confirmado = int(resposta.split()[-1])
+                novo_comeco = seq_confirmado // 4  # Converte seq a índice
+                
+                if novo_comeco > comeco_envio:
+                    comeco_envio = novo_comeco
+                    tentativas = 0  # Reset contador de tentativas
+                    print(f"[CLIENTE] Progresso: agora nos índices {comeco_envio}+")
+                else:
+                    # Sem progresso, tenta novamente
+                    tentativas += 1
+            
+            elif resposta.startswith("NACK"):
+                # NACK - retransmite a janela desde o ponto do NACK
+                nack_seq = int(resposta.split()[-1])
+                comeco_envio = nack_seq // 4  # Converte seq a índice
+                tentativas = 0
+                print(f"[CLIENTE] Retransmitindo a partir do índice {comeco_envio}")
+        
+        print("[CLIENTE] Todos os pacotes foram enviados!")
+        
 
     # depois de todos os pacotes terem sido enviados, envia uma mensagem de fim
     enviar_linha(cliente_socket, "END")
     print(f"[CLIENTE] Enviei mensagem de fim: END")
-    data = cliente_socket.recv(1024)
-    resposta = data.decode("utf-8").strip()
-    print(f"[CLIENTE] Recebi a mensagem do servidor: {resposta}")
-    resposta = resposta.split()
-
-    # fecha o socket
-    if(resposta[1] == "END"):
+    
+    try:
+        data = cliente_socket.recv(1024)
+        resposta = data.decode("utf-8").strip()
+        print(f"[CLIENTE] Recebi a mensagem do servidor: {resposta}")
+        
+        # fecha o socket
+        if "END" in resposta or "ACK" in resposta:
+            cliente_socket.close()
+            print("conexão encerrada com sucesso!")
+        else:
+            cliente_socket.close()
+            print("conexão encerrada")
+    except Exception as e:
+        print(f"[CLIENTE] Erro ao receber resposta final: {e}")
         cliente_socket.close()
-        print("conexão encerrada")
 
 if __name__ == "__main__":
     main()
