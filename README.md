@@ -85,7 +85,7 @@ Repetição Seletiva (RS)
 * IPv4 (AF_INET)
 * TCP (SOCK_STREAM)
 
-Como Executar
+# Como Executar
 
 1. Iniciar o Servidor
 
@@ -109,14 +109,14 @@ conectado ao servidor em 127.0.0.1:5000
 [CLIENTE] Enviei para o servidor: HANDSHAKE;modo=GBN
 [CLIENTE] Recebi do servidor: Mensagem recebida com sucesso! Janela : 5
 
-Estrutura do Projeto
+# Estrutura do Projeto
 
 projetoRedesDeComputadores/
 ├── cliente.py        # Cliente TCP/IP
 ├── servidor.py       # Servidor TCP/IP
 └── README.md         # Este arquivo
 
-Conceitos de Redes Implementados
+# Conceitos de Redes Implementados
 
 * Socket: Interface para comunicação em rede
 * Bind: Associação de um socket a um endereço IP e porta
@@ -128,18 +128,17 @@ Conceitos de Redes Implementados
 * Go-Back-N (GBN): Protocolo de retransmissão por janela
 * Repetição Seletiva (RS): Retransmissão apenas de pacotes perdidos
 
-Limitações
+# Limitações
 
 * Comunicação restrita ao localhost
 * Apenas um cliente por vez
 * Tamanho fixo de payload (4 caracteres)
 * Não há simulação explícita de perda de pacotes na rede
 
-Relatório de uso de IA
 
-Relatório de uso de IA
+# Relatório de uso de IA
 
-Entrega 1
+# Entrega 1
 
 O uso da Inteligência Artificial neste projeto foi restrito ao apoio teórico, sendo utilizado apenas para:
 
