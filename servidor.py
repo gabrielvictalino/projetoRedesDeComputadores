@@ -1,12 +1,28 @@
 import socket
+import random
+
+HOST = "127.0.0.1"
+PORT = 5000
 
 
-HOST = "127.0.0.1"  # localhost
-PORT = 5000  # porta do servidor (pode ser qualquer porta acima de 1024)
+def calcular_checksum(payload):
+    return sum(ord(c) for c in payload) % 256
 
 
-def processar_pacote_data(mensagem):
-    # exemplo de mensagem: "DATA;seq=0;total=10;payload=ABCD"
+def montar_pacote(seq, payload):
+    checksum = calcular_checksum(payload)
+    return f"DATA;seq={seq};payload={payload};checksum={checksum}"
+
+
+def validar_pacote(campos):
+    payload = campos.get("payload", "")
+    checksum_recebido = int(campos.get("checksum", -1))
+    checksum_calculado = calcular_checksum(payload)
+    return checksum_recebido == checksum_calculado
+
+
+
+def extrair_pacote_data(mensagem):
     partes = mensagem.split(";")
 
     if partes[0] != "DATA":
@@ -19,122 +35,196 @@ def processar_pacote_data(mensagem):
             campos[chave] = valor
 
     seq = int(campos.get("seq", -1))
-    total = int(campos.get("total", -1))
     payload = campos.get("payload", "")
 
-    return seq, total, payload
+    return seq, payload, campos
 
 
-def main():
-    # cria o socket TCP (AF_INET = IPV4, SOCK_STREAM = TCP)
+
+
+
+def criar_servidor():
     servidor_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    # faz o bind: associa o socket a (HOST, PORT)
     servidor_socket.bind((HOST, PORT))
-    print(f"servidor iniciado em {HOST}:{PORT}")
-
-    # começa a escutar conexoes (1 = fila maxima de conexoes pendentes)
     servidor_socket.listen(1)
 
-    # aceita uma conexao (bloqueia ate algum cliente se conectar)
+    print(f"servidor iniciado em {HOST}:{PORT}")
+    return servidor_socket
+
+
+def aceitar_conexao(servidor_socket):
     conexao, endereco = servidor_socket.accept()
     print(f"cliente conectado: {endereco}")
+    return conexao
 
-    # variaveis para controle da comunicação
-    pacotes_recebidos = {}
-    total_esperado = None
-    handshake_recebido = False
+
+def tratar_handshake(conexao, mensagem):
+    partes = mensagem.split(";")
+
+    if partes[0] != "HANDSHAKE":
+        return None
+
+    campos = {}
+    for parte in partes[1:]:
+        if "=" in parte:
+            chave, valor = parte.split("=", 1)
+            campos[chave] = valor
+
+    modo_operacao = campos.get("modo", "")
+    
+
+    print(f"[SERVIDOR] Recebi do cliente: {mensagem}")
+    janela = 5
+    resposta = f"Mensagem recebida com sucesso! Janela : {janela}"
+    conexao.sendall((resposta + "\n").encode("utf-8"))
+
+    print(f"[SERVIDOR] Enviei para o cliente: {resposta}\n")
+    return modo_operacao,janela
+
+
+def processar_mensagem(conexao, mensagem, seqEsperado, pacotes_recebidos,janela):
+    if mensagem == "END":
+        print("[SERVIDOR] Recebi mensagem de fim (END).")
+        return False, seqEsperado
+
+    print(f"[SERVIDOR] Recebi pacote bruto: {mensagem}")
+
+    resultado = extrair_pacote_data(mensagem)
+    if resultado is None:
+        print("[SERVIDOR] Pacote em formato inesperado.")
+        return True, seqEsperado
+
+    seq, payload, campos = resultado
+    
+    if not validar_pacote(campos):
+        print(f"[SERVIDOR] Checksum inválido para seq={seq}. Esperado seq={seqEsperado}")
+        conexao.sendall(f"NACK {seqEsperado}\n".encode())
+        return True, seqEsperado  # Continua recebendo, não sai
+    
+    if seq != seqEsperado:
+        print(f"[SERVIDOR] Pacote fora de sequência. Recebido seq={seq}, esperado seq={seqEsperado}")
+        conexao.sendall(f"NACK {seqEsperado}\n".encode())
+        return True, seqEsperado  # Continua recebendo, não sai
+
+    # Pacote correto - incrementa sequência
+    seqEsperado += 4
+    print(f"[SERVIDOR] Metadados - seq={seq}, payload='{payload}'")
+    pacotes_recebidos[seq] = payload
+
+    return True, seqEsperado
+
+
+def loop_recebimento(conexao, seq):
     buffer = ""
+    pacotes_recebidos = {}
+    handshake_recebido = False
+    seqEsperado = seq
+    seq_base = seq  # Primeira sequência da janela
+    modo_operacao = ""
+    janela = 0
+    ultima_janela_incompleta = False  # Flag para ter certeza se é a última janela
 
     while True:
-        # lê até 1024 bytes da conexão
-        data = conexao.recv(1024)
-
+        try:
+            data = conexao.recv(1024)
+        except Exception as e:
+            print(f"[SERVIDOR] Erro ao receber dados: {e}")
+            return pacotes_recebidos, False, seqEsperado
+        
         if not data:
-            # conexao fechada pelo cliente
-            break
+            return pacotes_recebidos, False, seqEsperado
 
-        # adiciona o que chegou ao buffer
         buffer += data.decode("utf-8")
 
-        # processa todas as mensagens completas encontradas no buffer
-        # cada mensagem termina com "\n"
         while "\n" in buffer:
             linha, buffer = buffer.split("\n", 1)
-            mensagem = linha
+            mensagem = linha.strip()
 
             if not mensagem:
                 continue
 
-            # handshake: a primeira mensagem recebida do cliente
+            # Primeiro, aguarda o handshake
             if not handshake_recebido:
-                print(f"[SERVIDOR] Recebi do cliente: {mensagem}")
-
-                # responde algo para o cliente (confirmação do handshake)
-                resposta = "Mensagem recebida com sucesso!"
-                conexao.sendall((resposta + "\n").encode("utf-8"))
-                print(f"[SERVIDOR] Enviei para o cliente: {resposta}\n")
-
-                handshake_recebido = True
+                resultado_hs = tratar_handshake(conexao, mensagem)
+                if resultado_hs is not None:
+                    modo_operacao, janela = resultado_hs
+                    handshake_recebido = True
                 continue
 
-            # verifica se recebeu a mensagem de fim
+            # Depois processa mensagens de dados
             if mensagem == "END":
-                print("[SERVIDOR] Recebi mensagem de fim (END).")
-                break
+                print(f"[SERVIDOR] Recebi mensagem END. Confirmando lote até seq={seqEsperado}")
+                # Envia ACK com última sequência confirmada (mesmo que janela incompleta)
+                if seqEsperado > seq_base:
+                    conexao.sendall(f"ACK {seqEsperado}, Janela {janela}\n".encode())
+                conexao.sendall(f"ACK END\n".encode())
+                return pacotes_recebidos, False, seqEsperado
 
-            print(f"[SERVIDOR] Recebi pacote bruto: {mensagem}")
-
-            resultado = processar_pacote_data(mensagem)
+            # Processa pacote de dados
+            resultado = extrair_pacote_data(mensagem)
             if resultado is None:
                 print("[SERVIDOR] Pacote em formato inesperado.")
                 continue
 
-            seq, total, payload = resultado
+            seq_recebido, payload, campos = resultado
 
-            # guarda total de pacotes se ainda não souber
-            if total_esperado is None:
-                total_esperado = total
-                print(f"[SERVIDOR] Total de pacotes esperado: {total_esperado}")
+            # Valida checksum
+            if not validar_pacote(campos):
+                print(f"[SERVIDOR] Checksum inválido para seq={seq_recebido}")
+                conexao.sendall(f"NACK {seq_recebido}\n".encode())
+                continue
 
-            # metadados do pacote
-            print(f"\n[SERVIDOR] Metadados - seq={seq}, total={total}, payload='{payload}'")
+            # Processa conforme protocolo
+            if modo_operacao == "GBN":
+                # Verifica se é o próximo esperado (sequência estrita)
+                if seq_recebido != seqEsperado:
+                    print(f"[SERVIDOR] Pacote fora de sequência. Recebido seq={seq_recebido}, esperado seq={seqEsperado}")
+                    conexao.sendall(f"NACK {seqEsperado}\n".encode())
+                    continue
 
-            # armazena payload por número de sequência
-            pacotes_recebidos[seq] = payload
+                # Pacote correto
+                seqEsperado += 4
+                print(f"[SERVIDOR] Recebido: seq={seq_recebido}, payload='{payload}'")
+                pacotes_recebidos[seq_recebido] = payload
 
-        # se a mensagem END foi recebida, encerra o while principal também
-        if mensagem == "END":
-            break
+                # Envia ACK quando completa uma janela inteira
+                janela_size = 4 * janela
+                if (seqEsperado - seq_base) >= janela_size:
+                    print(f"[SERVIDOR] Janela completa! Enviando ACK para seq={seqEsperado}")
+                    conexao.sendall(f"ACK {seqEsperado}, Janela {janela}\n".encode())
+                    seq_base = seqEsperado
 
-    # remontar a mensagem completa
-    if total_esperado is not None:
-        mensagem_completa = ""
-        faltando = []
+            elif modo_operacao == "RS":
+                # Repetição Seletiva: aceita pacotes fora de ordem
+                # Se já recebido, ignora duplicata
+                if seq_recebido in pacotes_recebidos:
+                    print(f"[SERVIDOR-RS] Pacote duplicado seq={seq_recebido}, reenviando ACK")
+                    conexao.sendall(f"ACK {seq_recebido}\n".encode())
+                    continue
 
-        for i in range(total_esperado):
-            # se algum seq faltar, coloca um marcador
-            if i in pacotes_recebidos:
-                parte = pacotes_recebidos[i]
-            else:
-                parte = "[FALTA PACOTE]"
-                faltando.append(i)
+                # Recebe o pacote (mesmo se fora de ordem)
+                print(f"[SERVIDOR-RS] Recebido: seq={seq_recebido}, payload='{payload}'")
+                pacotes_recebidos[seq_recebido] = payload
 
-            mensagem_completa += parte
+                # Envia ACK imediatamente para este pacote
+                conexao.sendall(f"ACK {seq_recebido}\n".encode())
+    
+    
 
-        print(f"\n[SERVIDOR] Mensagem completa reconstruída: {mensagem_completa}")
 
-        if faltando:
-            print(f"[SERVIDOR] Pacotes faltando: {faltando}")
-        else:
-            print("[SERVIDOR] Nenhum pacote faltando.")
-    else:
-        print("[SERVIDOR] Nenhum pacote DATA recebido.")
-
-    # fecha a conexão com o cliente
+def main():
+    servidor_socket = criar_servidor()
+    conexao = aceitar_conexao(servidor_socket)
+    
+    seq = 0
+    pacotes_recebidos, fim, _ = loop_recebimento(conexao, seq)
+    
     conexao.close()
     servidor_socket.close()
+
     print("servidor encerrado")
+    print("pacotes recebidos:", pacotes_recebidos)
+
 
 if __name__ == "__main__":
     main()
