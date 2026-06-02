@@ -4,6 +4,50 @@ from threading import Timer
 HOST = "127.0.0.1"  # endereço do servidor (localhost)
 PORT = 5000  # porta do servidor
 
+
+def criptografar(texto, chave):
+    
+    resultado = []
+    for caractere in texto:
+        if caractere.isalpha():
+            if caractere.isupper():
+                pos = ord(caractere) - ord('A')
+                nova_pos = (pos + chave) % 26
+                resultado.append(chr(ord('A') + nova_pos))
+            else:
+                pos = ord(caractere) - ord('a')
+                nova_pos = (pos + chave) % 26
+                resultado.append(chr(ord('a') + nova_pos))
+        else:
+            resultado.append(caractere)
+    return ''.join(resultado)
+
+
+def validar_chave(chave):
+    """Valida se a chave é um valor inteiro entre 1 e 25"""
+    try:
+        chave_int = int(chave)
+        return 1 <= chave_int <= 25
+    except (ValueError, TypeError):
+        return False
+
+
+def obter_chave_usuario(prompt="Digite a chave de criptografia (1-25): "):
+    """Solicita ao usuário uma chave válida"""
+    while True:
+        try:
+            chave = input(prompt)
+            if validar_chave(chave):
+                return int(chave)
+            else:
+                print("❌ Erro: A chave deve ser um número entre 1 e 25!")
+        except KeyboardInterrupt:
+            print("\nOperação cancelada.")
+            raise
+        except Exception as e:
+            print(f"❌ Erro ao ler chave: {e}")
+
+
 def calcular_checksum(payload):
     return sum(ord(c) for c in payload) % 256
 
@@ -112,10 +156,17 @@ def main():
 
     # exemplo de mensagem de handshake
     modo_operacao = input("Digite o modo de operação a ser trabalhado: (GBN)/(RS) ")  # Go-Back-N  ou repetição seletiva.
+    
+    # Solicita a chave de criptografia
+    print("\n Configuração de Criptografia (Cifra de César)")
+    print("A chave deve ser um número entre 1 e 25")
+    chave_criptografia = obter_chave_usuario("Digite a chave de criptografia (1-25): ")
+    print(f" Chave definida: {chave_criptografia}\n")
+    
     tamanho_max = 100
 
-    # formato: HANDSHAKE;modo=GBN;maxlen=100
-    handshake_msg = f"HANDSHAKE;modo={modo_operacao}"
+    # formato: HANDSHAKE;modo=GBN;chave=3;maxlen=100
+    handshake_msg = f"HANDSHAKE;modo={modo_operacao};chave={chave_criptografia}"
     enviar_linha(cliente_socket, handshake_msg)
     print(f"[CLIENTE] Enviei para o servidor: {handshake_msg}")
 
@@ -135,8 +186,15 @@ def main():
         cliente_socket.close()
         return
 
+    # Criptografa o texto com a Cifra de César
+    print(f"\n Criptografando mensagem com chave {chave_criptografia}...")
+    texto_criptografado = criptografar(texto, chave_criptografia)
+    print(f" Mensagem criptografada!")
+    print(f"   Original: {texto}")
+    print(f"   Criptografada: {texto_criptografado}\n")
+
     # divide o texto em blocos de até 4 caracteres (carga útil máxima)
-    blocos = fragmentar_texto(texto, tam_bloco=4)
+    blocos = fragmentar_texto(texto_criptografado, tam_bloco=4)
     total_pacotes = len(blocos)
 
     print(f"[CLIENTE] Texto será enviado em {total_pacotes} pacotes.\n")

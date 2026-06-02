@@ -1,8 +1,25 @@
 import socket
 import random
-
 HOST = "127.0.0.1"
 PORT = 5000
+
+def descriptografar(texto_criptografado, chave):
+    """Descriptografa um texto criptografado com Cifra de César"""
+    chave_inversa = (26 - chave) % 26
+    resultado = []
+    for caractere in texto_criptografado:
+        if caractere.isalpha():
+            if caractere.isupper():
+                pos = ord(caractere) - ord('A')
+                nova_pos = (pos + chave_inversa) % 26
+                resultado.append(chr(ord('A') + nova_pos))
+            else:
+                pos = ord(caractere) - ord('a')
+                nova_pos = (pos + chave_inversa) % 26
+                resultado.append(chr(ord('a') + nova_pos))
+        else:
+            resultado.append(caractere)
+    return ''.join(resultado)
 
 
 def calcular_checksum(payload):
@@ -71,15 +88,17 @@ def tratar_handshake(conexao, mensagem):
             campos[chave] = valor
 
     modo_operacao = campos.get("modo", "")
+    chave_criptografia = int(campos.get("chave", 0))
     
 
     print(f"[SERVIDOR] Recebi do cliente: {mensagem}")
+    print(f"[SERVIDOR] Modo: {modo_operacao}, Chave de criptografia: {chave_criptografia}")
     janela = 5
     resposta = f"Mensagem recebida com sucesso! Janela : {janela}"
     conexao.sendall((resposta + "\n").encode("utf-8"))
 
     print(f"[SERVIDOR] Enviei para o cliente: {resposta}\n")
-    return modo_operacao,janela
+    return modo_operacao, janela, chave_criptografia
 
 
 def processar_mensagem(conexao, mensagem, seqEsperado, pacotes_recebidos,janela):
@@ -122,6 +141,7 @@ def loop_recebimento(conexao, seq):
     seq_base = seq  # Primeira sequência da janela
     modo_operacao = ""
     janela = 0
+    chave_criptografia = 0  # Inicializa a chave
     ultima_janela_incompleta = False  # Flag para ter certeza se é a última janela
 
     while True:
@@ -129,10 +149,10 @@ def loop_recebimento(conexao, seq):
             data = conexao.recv(1024)
         except Exception as e:
             print(f"[SERVIDOR] Erro ao receber dados: {e}")
-            return pacotes_recebidos, False, seqEsperado
+            return pacotes_recebidos, False, seqEsperado, chave_criptografia
         
         if not data:
-            return pacotes_recebidos, False, seqEsperado
+            return pacotes_recebidos, False, seqEsperado, chave_criptografia
 
         buffer += data.decode("utf-8")
 
@@ -147,7 +167,7 @@ def loop_recebimento(conexao, seq):
             if not handshake_recebido:
                 resultado_hs = tratar_handshake(conexao, mensagem)
                 if resultado_hs is not None:
-                    modo_operacao, janela = resultado_hs
+                    modo_operacao, janela, chave_criptografia = resultado_hs
                     handshake_recebido = True
                 continue
 
@@ -158,7 +178,7 @@ def loop_recebimento(conexao, seq):
                 if seqEsperado > seq_base:
                     conexao.sendall(f"ACK {seqEsperado}, Janela {janela}\n".encode())
                 conexao.sendall(f"ACK END\n".encode())
-                return pacotes_recebidos, False, seqEsperado
+                return pacotes_recebidos, False, seqEsperado, chave_criptografia
 
             # Processa pacote de dados
             resultado = extrair_pacote_data(mensagem)
@@ -217,13 +237,25 @@ def main():
     conexao = aceitar_conexao(servidor_socket)
     
     seq = 0
-    pacotes_recebidos, fim, _ = loop_recebimento(conexao, seq)
+    pacotes_recebidos, fim, _, chave_criptografia = loop_recebimento(conexao, seq)
     
     conexao.close()
     servidor_socket.close()
 
     print("servidor encerrado")
     print("pacotes recebidos:", pacotes_recebidos)
+    
+    # Reconstrói a mensagem original a partir dos pacotes
+    if pacotes_recebidos:
+        mensagem_criptografada = ''.join(pacotes_recebidos[seq] for seq in sorted(pacotes_recebidos.keys()))
+        print(f"\n Mensagem criptografada recebida: {mensagem_criptografada}")
+        
+        # Descriptografa a mensagem
+        if chave_criptografia > 0:
+            mensagem_original = descriptografar(mensagem_criptografada, chave_criptografia)
+            print(f" Mensagem descriptografada: {mensagem_original}")
+        else:
+            print(" Chave de criptografia não fornecida!")
 
 
 if __name__ == "__main__":
