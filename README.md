@@ -1,153 +1,147 @@
+# Projeto de Redes de Computadores
 
-# Projeto de Infraestrutura de Comunicação
+## Descrição
 
-# Descrição
+Este projeto implementa uma aplicação cliente-servidor em Python que demonstra protocolos de controle de erro para transferência confiável de dados sobre TCP/IP. São implementados dois protocolos principais: Go-Back-N (GBN) e Repetição Seletiva (Repetição Seletiva - RS). O sistema inclui fragmentação de mensagens, cálculo de checksum para detecção de erros, controle de fluxo com janelas deslizantes e retransmissão automática de pacotes perdidos ou corrompidos.
 
-Este projeto implementa uma infraestrutura de comunicação entre um cliente e um servidor utilizando sockets TCP/IP em Python. O objetivo é demonstrar, de forma prática, os conceitos fundamentais de programação de redes, incluindo controle de erro, controle de fluxo e protocolos de transmissão confiável.
+## Arquitetura
 
-# Arquitetura
+O projeto segue o modelo cliente-servidor:
 
-O projeto segue o modelo cliente-servidor com duas aplicações principais:
+- **Servidor** (`servidor.py`): Aguarda conexões na porta 5000 (localhost), processa handshakes, recebe pacotes de dados e confirma recebimentos usando ACK/NACK.
+- **Cliente** (`cliente.py`): Conecta ao servidor, envia handshake com modo de operação, fragmenta mensagens em pacotes e gerencia retransmissões conforme o protocolo escolhido.
 
-* Servidor (servidor.py): Aguarda conexões na porta 5000 (localhost), processa o handshake, recebe pacotes de dados, valida integridade e sequência, e responde com ACKs ou NACKs conforme o protocolo utilizado.
-* Cliente (cliente.py): Conecta-se ao servidor, realiza o handshake negociando o modo de operação, fragmenta a mensagem em pacotes e realiza o envio utilizando os protocolos Go-Back-N ou Repetição Seletiva.
+## Funcionalidades
 
-# Funcionalidades
+### Handshake
 
-# Handshake
+O cliente inicia a comunicação enviando:
 
-O cliente inicia a comunicação com um handshake contendo:
+- **Modo de operação**: "GBN" (Go-Back-N) ou "RS" (Repetição Seletiva)
+- Formato: `HANDSHAKE;modo=<modo>`
 
-* Modo de operação: Go-Back-N (GBN) ou Repetição Seletiva (RS)
+O servidor responde confirmando o modo e definindo o tamanho da janela (ex.: "Mensagem recebida com sucesso! Janela : 5").
 
-Formato da mensagem:
+### Formato de Pacotes
 
-HANDSHAKE;modo=GBN
+Pacotes de dados seguem o formato:
 
-O servidor responde informando o tamanho da janela de transmissão:
+```
+DATA;seq=<sequencia>;payload=<dados>;checksum=<valor>
+```
 
-Mensagem recebida com sucesso! Janela : 5
+- **seq**: Número de sequência (incrementa de 4 em 4)
+- **payload**: Dados (até 4 caracteres por pacote)
+- **checksum**: Soma dos códigos ASCII dos caracteres do payload módulo 256
 
-# Comunicação
+### Protocolos Implementados
 
-* Estabelecimento de conexão TCP entre cliente e servidor
-* Fragmentação da mensagem em blocos menores
-* Envio de pacotes com controle de sequência
-* Verificação de integridade com checksum
-* Uso de ACK e NACK para controle de erros
-* Encerramento da conexão com mensagem END
+#### Go-Back-N (GBN)
 
-# Fragmentação de Dados
+- Transmite janelas completas de pacotes
+- Retransmite toda a janela em caso de erro ou timeout
+- Confirmação cumulativa com ACKs
 
-A mensagem digitada pelo usuário é dividida em blocos de até 4 caracteres, formando múltiplos pacotes para envio.
+#### Repetição Seletiva (RS)
 
-Estrutura dos Pacotes
+- Transmite pacotes individuais dentro da janela
+- Retransmite apenas pacotes não confirmados
+- Confirmação individual com ACKs por pacote
 
-Os pacotes seguem o formato:
+### Controle de Erro
 
-DATA;seq=0;payload=ABCD;checksum=123
+- **Checksum**: Validação de integridade dos dados
+- **NACK**: Solicitação de retransmissão para pacotes inválidos ou fora de sequência
+- **Timeout**: Retransmissão automática após 5 segundos sem resposta
 
-Onde:
+### Encerramento
 
-* seq representa o número de sequência (incrementado de 4 em 4)
-* payload contém os dados
-* checksum garante a integridade da informação
+- Cliente envia "END" após transmissão completa
+- Servidor confirma com "ACK END"
 
-# Verificação de Integridade
+## Tecnologias Utilizadas
 
-O checksum é calculado com base na soma dos caracteres do payload:
+- **Python 3**
+- **Socket API** para comunicação TCP/IP
+- **Threading** (no cliente para timeouts)
 
-sum(ord(c) for c in payload) % 256
+## Como Executar
 
-Se houver erro:
+### Pré-requisitos
 
-* O servidor envia um NACK
-* O cliente realiza retransmissão
+- Python 3 instalado
 
-# Protocolos Implementados
+### 1. Iniciar o Servidor
 
-Go-Back-N (GBN)
+Abra um terminal e execute:
 
-* Envio de pacotes em janelas
-* ACK confirma todos os pacotes até um determinado ponto
-* Em caso de erro, a janela inteira é retransmitida
-
-Repetição Seletiva (RS)
-
-* Pacotes são confirmados individualmente
-* O cliente mantém controle dos pacotes confirmados
-* Apenas pacotes não confirmados são reenviados
-
-# Tecnologias Utilizadas
-
-* Python
-* Socket API (biblioteca padrão)
-* IPv4 (AF_INET)
-* TCP (SOCK_STREAM)
-
-# Como Executar
-
-1. Iniciar o Servidor
-
+```
 python servidor.py
+```
 
 Output esperado:
 
+```
 servidor iniciado em 127.0.0.1:5000
+```
 
-2. Executar o Cliente (abrir outro terminal)
+### 2. Executar o Cliente
 
+Abra outro terminal e execute:
+
+```
 python cliente.py
+```
 
-Durante a execução, será solicitado o modo de operação:
+O cliente solicitará:
 
-Digite o modo de operação a ser trabalhado: (GBN)/(RS)
+- Modo de operação: "GBN" ou "RS"
+- Mensagem a enviar (mínimo 30 caracteres)
 
-Output esperado:
+### Exemplo de Execução
 
-conectado ao servidor em 127.0.0.1:5000
-[CLIENTE] Enviei para o servidor: HANDSHAKE;modo=GBN
-[CLIENTE] Recebi do servidor: Mensagem recebida com sucesso! Janela : 5
+1. Inicie o servidor
+2. Execute o cliente
+3. Escolha o modo (ex.: GBN)
+4. Digite uma mensagem longa (mínimo 30 caracteres)
+5. Observe os logs de transmissão e confirmações
 
-# Estrutura do Projeto
+## Considerações Técnicas
 
+- Porta padrão: 5000 (localhost)
+- Tamanho máximo do payload: 4 caracteres por pacote
+- Janela padrão: 5 pacotes
+- Timeout: 5 segundos para ACKs
+- Checksum: Soma ASCII módulo 256
+
+## Estrutura do Projeto
+
+```
 projetoRedesDeComputadores/
-├── cliente.py        # Cliente TCP/IP
-├── servidor.py       # Servidor TCP/IP
+├── cliente.py        # Implementação do cliente
+├── servidor.py       # Implementação do servidor
 └── README.md         # Este arquivo
+```
 
-# Conceitos de Redes Implementados
+## Conceitos de Redes Implementados
 
-* Socket: Interface para comunicação em rede
-* Bind: Associação de um socket a um endereço IP e porta
-* Listen/Accept: Servidor aguardando e aceitando conexões
-* Handshake: Negociação inicial entre cliente e servidor
-* Codificação UTF-8: Conversão entre caracteres e bytes
-* Controle de fluxo: Uso de janelas deslizantes
-* Controle de erro: Uso de checksum, ACK e NACK
-* Go-Back-N (GBN): Protocolo de retransmissão por janela
-* Repetição Seletiva (RS): Retransmissão apenas de pacotes perdidos
+- **Socket**: Interface para comunicação em rede
+- **Bind**: Associação de um socket a um endereço IP e porta
+- **Listen/Accept**: Servidor aguardando e aceitando conexões
+- **Handshake**: (aperto de mãos) Negociação de parâmetros entre cliente e servidor
+- **Codificação UTF-8**: Conversão entre caracteres e bytes
+- **Go-Back-N (GBN)**: Protocolo de controle de fluxo para transmissão confiável
 
-# Limitações
+## Relatório de uso de IA
 
-* Comunicação restrita ao localhost
-* Apenas um cliente por vez
-* Tamanho fixo de payload (4 caracteres)
-* Não há simulação explícita de perda de pacotes na rede
+### Entrega 1
 
+O uso da IA foi restrito somente a pesquisas sobre a biblioteca "socket", sendo essa indispensável para o desenvolvimento da aplicação.
 
-# Relatório de uso de IA
+### Entrega 2
 
-# Entrega 1
+Utilizamos a IA para:
 
-O uso da Inteligência Artificial neste projeto foi restrito ao apoio teórico, sendo utilizado apenas para:
-
-* Pesquisa sobre a biblioteca socket
-* Compreensão de conceitos de redes de computadores
-
-Etapa final do projeto
-
-Na etapa final do desenvolvimento, a IA também foi utilizada de forma pontual para:
-
-* Auxiliar na identificação e correção de erros no código
-* Esclarecer dúvidas sobre comportamentos inesperados na comunicação cliente-servidor
+1. debuggar
+2. entender conceitos relacionados ao conteúdo exposto em sala e como aplicá-los no projeto
+3. estruturação e organização de código
