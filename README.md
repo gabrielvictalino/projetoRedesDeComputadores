@@ -110,7 +110,7 @@ O cliente solicitará:
 
 - Porta padrão: 5000 (localhost)
 - Tamanho máximo do payload: 4 caracteres por pacote
-- Janela padrão: 5 pacotes
+- Janela padrão: 5 pacotes (com variação possível durante a comunicação)
 - Timeout: 5 segundos para ACKs
 - Checksum: Soma ASCII módulo 256
 
@@ -142,6 +142,13 @@ O uso da IA foi restrito somente a pesquisas sobre a biblioteca "socket", sendo 
 
 Utilizamos a IA para:
 
+1. debuggar
+2. entender conceitos relacionados ao conteúdo exposto em sala e como aplicá-los no projeto
+3. estruturação e organização de código
+
+### Entrega 3
+
+Utilizamos a IA para:
 1. debuggar
 2. entender conceitos relacionados ao conteúdo exposto em sala e como aplicá-los no projeto
 3. estruturação e organização de código

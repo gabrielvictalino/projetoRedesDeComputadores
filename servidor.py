@@ -1,47 +1,72 @@
 import socket
-import random
+
 HOST = "127.0.0.1"
 PORT = 5000
 
-def descriptografar(texto_criptografado, chave):
-    """Descriptografa um texto criptografado com Cifra de César"""
-    chave_inversa = (26 - chave) % 26
-    resultado = []
-    for caractere in texto_criptografado:
-        if caractere.isalpha():
-            if caractere.isupper():
-                pos = ord(caractere) - ord('A')
-                nova_pos = (pos + chave_inversa) % 26
-                resultado.append(chr(ord('A') + nova_pos))
-            else:
-                pos = ord(caractere) - ord('a')
-                nova_pos = (pos + chave_inversa) % 26
-                resultado.append(chr(ord('a') + nova_pos))
-        else:
-            resultado.append(caractere)
-    return ''.join(resultado)
+# ─── Cifra de César (criptografia simétrica manual) ───────────────────────────
+# Mesma implementação do cliente. CHAVE_CESAR deve ser igual nos dois lados.
+CHAVE_CESAR = 3
 
+def cifrar_cesar(texto, chave=CHAVE_CESAR):
+    resultado = ""
+    for c in texto:
+        if c.isalpha():
+            base = ord('A') if c.isupper() else ord('a')
+            resultado += chr((ord(c) - base + chave) % 26 + base)
+        else:
+            resultado += c
+    return resultado
+
+def decifrar_cesar(texto, chave=CHAVE_CESAR):
+    return cifrar_cesar(texto, 26 - (chave % 26))
+
+# ─── CRC-8 (integridade manual) ───────────────────────────────────────────────
+# Idêntico ao cliente. Polinômio 0x07, implementado bit-a-bit.
+
+def calcular_crc8(dados):
+    POLINOMIO = 0x07
+    crc = 0x00
+    for byte in dados.encode('utf-8'):
+        crc ^= byte
+        for _ in range(8):
+            if crc & 0x80:
+                crc = ((crc << 1) & 0xFF) ^ POLINOMIO
+            else:
+                crc = (crc << 1) & 0xFF
+    return crc
+
+# ─── Checksum simples (mantido da entrega anterior) ───────────────────────────
 
 def calcular_checksum(payload):
     return sum(ord(c) for c in payload) % 256
 
-
 def montar_pacote(seq, payload):
     checksum = calcular_checksum(payload)
-    return f"DATA;seq={seq};payload={payload};checksum={checksum}"
-
+    crc = calcular_crc8(payload)
+    return f"DATA;seq={seq};payload={payload};checksum={checksum};crc={crc}"
 
 def validar_pacote(campos):
+    """
+    Retorna (valido, motivo_erro).
+    Verifica checksum e, se presente, o CRC-8.
+    """
     payload = campos.get("payload", "")
+
     checksum_recebido = int(campos.get("checksum", -1))
-    checksum_calculado = calcular_checksum(payload)
-    return checksum_recebido == checksum_calculado
+    if checksum_recebido != calcular_checksum(payload):
+        return False, "checksum"
 
+    if "crc" in campos:
+        crc_recebido = int(campos.get("crc", -1))
+        if crc_recebido != calcular_crc8(payload):
+            return False, "crc8"
 
+    return True, None
+
+# ─── Parser de pacotes ────────────────────────────────────────────────────────
 
 def extrair_pacote_data(mensagem):
     partes = mensagem.split(";")
-
     if partes[0] != "DATA":
         return None
 
@@ -53,31 +78,28 @@ def extrair_pacote_data(mensagem):
 
     seq = int(campos.get("seq", -1))
     payload = campos.get("payload", "")
-
     return seq, payload, campos
 
-
-
-
+# ─── Socket ───────────────────────────────────────────────────────────────────
 
 def criar_servidor():
     servidor_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    # SO_REUSEADDR evita "Address already in use" ao reiniciar rapidamente
+    servidor_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     servidor_socket.bind((HOST, PORT))
     servidor_socket.listen(1)
-
-    print(f"servidor iniciado em {HOST}:{PORT}")
+    print(f"Servidor iniciado em {HOST}:{PORT}")
     return servidor_socket
-
 
 def aceitar_conexao(servidor_socket):
     conexao, endereco = servidor_socket.accept()
-    print(f"cliente conectado: {endereco}")
+    print(f"Cliente conectado: {endereco}")
     return conexao
 
+# ─── Handshake ────────────────────────────────────────────────────────────────
 
 def tratar_handshake(conexao, mensagem):
     partes = mensagem.split(";")
-
     if partes[0] != "HANDSHAKE":
         return None
 
@@ -87,98 +109,68 @@ def tratar_handshake(conexao, mensagem):
             chave, valor = parte.split("=", 1)
             campos[chave] = valor
 
-    modo_operacao = campos.get("modo", "")
-    chave_criptografia = int(campos.get("chave", 0))
-    
+    modo_operacao = campos.get("modo", "GBN")
+    usar_cifra = campos.get("cifra", "nao") == "sim"
 
     print(f"[SERVIDOR] Recebi do cliente: {mensagem}")
-    print(f"[SERVIDOR] Modo: {modo_operacao}, Chave de criptografia: {chave_criptografia}")
+    print(f"[SERVIDOR] Modo: {modo_operacao} | Cifra de César: {'ativada' if usar_cifra else 'desativada'}")
+
     janela = 5
     resposta = f"Mensagem recebida com sucesso! Janela : {janela}"
     conexao.sendall((resposta + "\n").encode("utf-8"))
-
     print(f"[SERVIDOR] Enviei para o cliente: {resposta}\n")
-    return modo_operacao, janela, chave_criptografia
 
+    return modo_operacao, janela, usar_cifra
 
-def processar_mensagem(conexao, mensagem, seqEsperado, pacotes_recebidos,janela):
-    if mensagem == "END":
-        print("[SERVIDOR] Recebi mensagem de fim (END).")
-        return False, seqEsperado
+# ─── Loop principal de recebimento ────────────────────────────────────────────
 
-    print(f"[SERVIDOR] Recebi pacote bruto: {mensagem}")
-
-    resultado = extrair_pacote_data(mensagem)
-    if resultado is None:
-        print("[SERVIDOR] Pacote em formato inesperado.")
-        return True, seqEsperado
-
-    seq, payload, campos = resultado
-    
-    if not validar_pacote(campos):
-        print(f"[SERVIDOR] Checksum inválido para seq={seq}. Esperado seq={seqEsperado}")
-        conexao.sendall(f"NACK {seqEsperado}\n".encode())
-        return True, seqEsperado  # Continua recebendo, não sai
-    
-    if seq != seqEsperado:
-        print(f"[SERVIDOR] Pacote fora de sequência. Recebido seq={seq}, esperado seq={seqEsperado}")
-        conexao.sendall(f"NACK {seqEsperado}\n".encode())
-        return True, seqEsperado  # Continua recebendo, não sai
-
-    # Pacote correto - incrementa sequência
-    seqEsperado += 4
-    print(f"[SERVIDOR] Metadados - seq={seq}, payload='{payload}'")
-    pacotes_recebidos[seq] = payload
-
-    return True, seqEsperado
-
-
-def loop_recebimento(conexao, seq):
+def loop_recebimento(conexao, seq_inicial):
     buffer = ""
     pacotes_recebidos = {}
     handshake_recebido = False
-    seqEsperado = seq
-    seq_base = seq  # Primeira sequência da janela
-    modo_operacao = ""
-    janela = 0
-    chave_criptografia = 0  # Inicializa a chave
-    ultima_janela_incompleta = False  # Flag para ter certeza se é a última janela
+    seqEsperado = seq_inicial
+    seq_base = seq_inicial
+    modo_operacao = "GBN"
+    janela = 5
+    usar_cifra = False
+    pacotes_ok_consecutivos = 0  # rastreia acertos seguidos para aumentar janela
 
     while True:
         try:
             data = conexao.recv(1024)
         except Exception as e:
             print(f"[SERVIDOR] Erro ao receber dados: {e}")
-            return pacotes_recebidos, False, seqEsperado, chave_criptografia
-        
+            return pacotes_recebidos, False, seqEsperado, usar_cifra
+
         if not data:
-            return pacotes_recebidos, False, seqEsperado, chave_criptografia
+            return pacotes_recebidos, False, seqEsperado, usar_cifra
 
         buffer += data.decode("utf-8")
 
         while "\n" in buffer:
             linha, buffer = buffer.split("\n", 1)
             mensagem = linha.strip()
-
             if not mensagem:
                 continue
 
-            # Primeiro, aguarda o handshake
+            # Fase de handshake
             if not handshake_recebido:
                 resultado_hs = tratar_handshake(conexao, mensagem)
                 if resultado_hs is not None:
-                    modo_operacao, janela, chave_criptografia = resultado_hs
+                    modo_operacao, janela, usar_cifra = resultado_hs
                     handshake_recebido = True
                 continue
 
-            # Depois processa mensagens de dados
+            # Fim de transmissão
             if mensagem == "END":
-                print(f"[SERVIDOR] Recebi mensagem END. Confirmando lote até seq={seqEsperado}")
-                # Envia ACK com última sequência confirmada (mesmo que janela incompleta)
-                if seqEsperado > seq_base:
-                    conexao.sendall(f"ACK {seqEsperado}, Janela {janela}\n".encode())
-                conexao.sendall(f"ACK END\n".encode())
-                return pacotes_recebidos, False, seqEsperado, chave_criptografia
+                print(f"[SERVIDOR] Recebi END. Confirmando até seq={seqEsperado}")
+                try:
+                    if seqEsperado > seq_base:
+                        conexao.sendall(f"ACK {seqEsperado}, Janela {janela}\n".encode())
+                    conexao.sendall(b"ACK END\n")
+                except (ConnectionResetError, BrokenPipeError, OSError) as e:
+                    print(f"[SERVIDOR] Aviso: cliente encerrou antes de receber ACK END ({e})")
+                return pacotes_recebidos, False, seqEsperado, usar_cifra
 
             # Processa pacote de dados
             resultado = extrair_pacote_data(mensagem)
@@ -188,75 +180,91 @@ def loop_recebimento(conexao, seq):
 
             seq_recebido, payload, campos = resultado
 
-            # Valida checksum
-            if not validar_pacote(campos):
-                print(f"[SERVIDOR] Checksum inválido para seq={seq_recebido}")
-                conexao.sendall(f"NACK {seq_recebido}\n".encode())
+            # Valida integridade (checksum + CRC-8)
+            valido, motivo_erro = validar_pacote(campos)
+            if not valido:
+                janela = max(janela - 1, 1)
+                pacotes_ok_consecutivos = 0
+                print(f"[SERVIDOR] Falha de integridade ({motivo_erro}) para seq={seq_recebido}. Janela reduzida para {janela}. Enviando NACK.")
+                if modo_operacao == "GBN":
+                    conexao.sendall(f"NACK {seqEsperado}, Janela {janela}\n".encode())
+                else:
+                    conexao.sendall(f"NACK {seq_recebido}, Janela {janela}\n".encode())
                 continue
 
-            # Processa conforme protocolo
+            # ── GBN ──────────────────────────────────────────────────────────
             if modo_operacao == "GBN":
-                # Verifica se é o próximo esperado (sequência estrita)
                 if seq_recebido != seqEsperado:
-                    print(f"[SERVIDOR] Pacote fora de sequência. Recebido seq={seq_recebido}, esperado seq={seqEsperado}")
-                    conexao.sendall(f"NACK {seqEsperado}\n".encode())
+                    print(f"[SERVIDOR] Fora de sequência. Recebido seq={seq_recebido}, esperado seq={seqEsperado}")
+                    janela = max(janela - 1, 1)
+                    pacotes_ok_consecutivos = 0
+                    print(f"[SERVIDOR] Janela reduzida para {janela}")
+                    conexao.sendall(f"NACK {seqEsperado}, Janela {janela}\n".encode())
                     continue
 
-                # Pacote correto
                 seqEsperado += 4
-                print(f"[SERVIDOR] Recebido: seq={seq_recebido}, payload='{payload}'")
+                pacotes_ok_consecutivos += 1
+                print(f"[SERVIDOR] Recebido: seq={seq_recebido}, payload='{payload}', checksum=OK, crc=OK")
                 pacotes_recebidos[seq_recebido] = payload
 
-                # Envia ACK quando completa uma janela inteira
-                janela_size = 4 * janela
-                if (seqEsperado - seq_base) >= janela_size:
-                    print(f"[SERVIDOR] Janela completa! Enviando ACK para seq={seqEsperado}")
+                # ACK cumulativo ao completar janela
+                janela_bytes = 4 * janela
+                if (seqEsperado - seq_base) >= janela_bytes:
+                    janela = min(janela + 1, 5)
+                    pacotes_ok_consecutivos = 0
+                    print(f"[SERVIDOR] Janela completa! Janela aumentada para {janela}. Enviando ACK seq={seqEsperado}")
                     conexao.sendall(f"ACK {seqEsperado}, Janela {janela}\n".encode())
                     seq_base = seqEsperado
 
+            # ── RS ───────────────────────────────────────────────────────────
             elif modo_operacao == "RS":
-                # Repetição Seletiva: aceita pacotes fora de ordem
-                # Se já recebido, ignora duplicata
                 if seq_recebido in pacotes_recebidos:
-                    print(f"[SERVIDOR-RS] Pacote duplicado seq={seq_recebido}, reenviando ACK")
-                    conexao.sendall(f"ACK {seq_recebido}\n".encode())
+                    print(f"[SERVIDOR-RS] Duplicata seq={seq_recebido}, reenviando ACK")
+                    conexao.sendall(f"ACK {seq_recebido}, Janela {janela}\n".encode())
                     continue
 
-                # Recebe o pacote (mesmo se fora de ordem)
-                print(f"[SERVIDOR-RS] Recebido: seq={seq_recebido}, payload='{payload}'")
+                print(f"[SERVIDOR-RS] Recebido: seq={seq_recebido}, payload='{payload}', checksum=OK, crc=OK")
                 pacotes_recebidos[seq_recebido] = payload
+                pacotes_ok_consecutivos += 1
 
-                # Envia ACK imediatamente para este pacote
-                conexao.sendall(f"ACK {seq_recebido}\n".encode())
-    
-    
+                # Aumenta janela a cada 'janela' pacotes corretos consecutivos
+                if pacotes_ok_consecutivos >= janela:
+                    janela = min(janela + 1, 5)
+                    pacotes_ok_consecutivos = 0
+                    print(f"[SERVIDOR-RS] Janela aumentada para {janela}")
 
+                conexao.sendall(f"ACK {seq_recebido}, Janela {janela}\n".encode())
+
+# ─── Reconstrução e exibição da mensagem ─────────────────────────────────────
+
+def reconstruir_mensagem(pacotes_recebidos, usar_cifra):
+    """Ordena pacotes por número de sequência e reconstrói o texto original."""
+    if not pacotes_recebidos:
+        return ""
+    chaves_ordenadas = sorted(pacotes_recebidos.keys())
+    texto = "".join(pacotes_recebidos[k] for k in chaves_ordenadas)
+    if usar_cifra:
+        texto = decifrar_cesar(texto)
+    return texto
+
+# ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
     servidor_socket = criar_servidor()
     conexao = aceitar_conexao(servidor_socket)
-    
-    seq = 0
-    pacotes_recebidos, fim, _, chave_criptografia = loop_recebimento(conexao, seq)
-    
+
+    pacotes_recebidos, _, _, usar_cifra = loop_recebimento(conexao, seq_inicial=0)
+
     conexao.close()
     servidor_socket.close()
+    print("\nServidor encerrado.")
 
-    print("servidor encerrado")
-    print("pacotes recebidos:", pacotes_recebidos)
-    
-    # Reconstrói a mensagem original a partir dos pacotes
-    if pacotes_recebidos:
-        mensagem_criptografada = ''.join(pacotes_recebidos[seq] for seq in sorted(pacotes_recebidos.keys()))
-        print(f"\n Mensagem criptografada recebida: {mensagem_criptografada}")
-        
-        # Descriptografa a mensagem
-        if chave_criptografia > 0:
-            mensagem_original = descriptografar(mensagem_criptografada, chave_criptografia)
-            print(f" Mensagem descriptografada: {mensagem_original}")
-        else:
-            print(" Chave de criptografia não fornecida!")
-
+    print(f"\n{'=' * 50}")
+    print("MENSAGEM RECONSTRUÍDA:")
+    mensagem_final = reconstruir_mensagem(pacotes_recebidos, usar_cifra)
+    print(f"  {mensagem_final}")
+    print(f"{'=' * 50}")
+    print(f"Total de pacotes recebidos: {len(pacotes_recebidos)}")
 
 if __name__ == "__main__":
     main()
