@@ -54,10 +54,10 @@ DATA;seq=<sequencia>;payload=<dados>;checksum=<valor>
 - **NACK**: Solicitação de retransmissão para pacotes inválidos ou fora de sequência
 - **Timeout**: Retransmissão automática após 5 segundos sem resposta
 
-### Encerramento
+### Algoritmos 
 
-- Cliente envia "END" após transmissão completa
-- Servidor confirma com "ACK END"
+- **Checagem de integridade (CRC-8)**: para detectar erros de transmissão
+- **Criptografia simétrica (Cifra de César)**: para simular erros intencionais
 
 ## Tecnologias Utilizadas
 
@@ -131,12 +131,18 @@ projetoRedesDeComputadores/
 - **Handshake**: (aperto de mãos) Negociação de parâmetros entre cliente e servidor
 - **Codificação UTF-8**: Conversão entre caracteres e bytes
 - **Go-Back-N (GBN)**: Protocolo de controle de fluxo para transmissão confiável
+- **Repetição Seletiva (RS)**: Protocolo de controle de fluxo para transmissão confiável com retransmissão seletiva
+- **Checksum**: Soma de verificação
+- **ACK/NACK**: Confirmação de recebimento ou solicitação de retransmissão
+- **CRC-8**: Algoritmo de detecção de erros
+- **Cifra de César**: Técnica de criptografia simples para simular erros
 
 ## Relatório de uso de IA
 
 ### Entrega 1
 
-O uso da IA foi restrito somente a pesquisas sobre a biblioteca "socket", sendo essa indispensável para o desenvolvimento da aplicação.
+O uso da IA foi restrito somente a pesquisas sobre a biblioteca "socket", sendo essa indispensável para o desenvolvimento da aplicação. 
+Usamos a IA para formatar, organizar e estruturar o README.
 
 ### Entrega 2
 
@@ -145,6 +151,7 @@ Utilizamos a IA para:
 1. debuggar
 2. entender conceitos relacionados ao conteúdo exposto em sala e como aplicá-los no projeto
 3. estruturação e organização de código
+4. formatar, organizar e estruturar o README
 
 ### Entrega 3
 
@@ -152,3 +159,4 @@ Utilizamos a IA para:
 1. debuggar
 2. entender conceitos relacionados ao conteúdo exposto em sala e como aplicá-los no projeto
 3. estruturação e organização de código
+4. formatar, organizar e estruturar o README
